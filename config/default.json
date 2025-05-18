@@ -1,0 +1,14 @@
+{
+  "aws": {
+    "accountId": "OVERWRITTEN_BY_ENV",
+    "region": "OVERWRITTEN_BY_ENV",
+    "apiGateway": {
+      "endpointUrl": "OVERWRITTEN_BY_ENV"
+    }
+  },
+  "services": {
+    "helloWorld": {
+      "greeting": "Hello, World!"
+    }
+  }
+}

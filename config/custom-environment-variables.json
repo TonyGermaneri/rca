@@ -1,0 +1,9 @@
+{
+  "aws": {
+    "accountId": "AWS_ACC_ID",
+    "region": "AWS_REGION",
+    "apiGateway": {
+      "endpointUrl": "ENDPOINT_URL"
+    }
+  }
+}
