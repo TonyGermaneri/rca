@@ -7,13 +7,15 @@ use rand::Rng;
 #[wasm_bindgen]
 #[derive(Clone, Copy, Debug)]
 pub struct LifeParams {
-    /// How quickly brightness fades when the environment is poor (higher ⇒ faster fade)
     pub decay_step: u8,
-    /// How quickly brightness recovers in a healthy environment (higher ⇒ faster brighten)
     pub recovery_step: u8,
+    pub sat_recovery_factor: f32,
+    pub sat_decay_factor: f32,
+    pub lum_decay_factor: f32,
+    pub sat_ghost_factor: f32,
+    pub hue_drift_strength: f32,
+    pub hue_lerp_factor: f32,
 }
-
-
 
 /// The simulation universe.  The `params` field makes the life‑cycle tunable at runtime.
 #[wasm_bindgen]
@@ -28,19 +30,34 @@ pub struct Universe {
 
 
 impl LifeParams {
-    /// Construct new parameters at runtime in a clear and ergonomic way.
-    pub fn new(decay_step: u8, recovery_step: u8) -> Self {
-        Self { decay_step, recovery_step }
+    pub fn new(
+        decay_step: u8,
+        recovery_step: u8,
+        sat_recovery_factor: f32,
+        sat_decay_factor: f32,
+        lum_decay_factor: f32,
+        sat_ghost_factor: f32,
+        hue_drift_strength: f32,
+        hue_lerp_factor: f32,
+    ) -> Self {
+        Self {
+            decay_step,
+            recovery_step,
+            sat_recovery_factor,
+            sat_decay_factor,
+            lum_decay_factor,
+            sat_ghost_factor,
+            hue_drift_strength,
+            hue_lerp_factor,
+        }
     }
 }
 
 impl Default for LifeParams {
     fn default() -> Self {
-        Self::new(1, 1)
+        Self::new(1, 1, 0.8, 0.6, 0.95, 0.9, 0.01, 0.1)
     }
 }
-
-
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -71,15 +88,31 @@ impl Universe {
       Self { params, ..Self::new(width, height) }
   }
 
-  /// Update the life‑cycle parameters while the simulation is running.
-  /// Call with primitive values so UI sliders can feed directly into the engine.
-  pub fn set_params(&mut self, decay_step: u8, recovery_step: u8) {
-      self.params = LifeParams::new(decay_step, recovery_step);
+  pub fn set_params(
+      &mut self,
+      decay_step: u8,
+      recovery_step: u8,
+      sat_recovery_factor: f32,
+      sat_decay_factor: f32,
+      lum_decay_factor: f32,
+      sat_ghost_factor: f32,
+      hue_drift_strength: f32,
+      hue_lerp_factor: f32,
+  ) {
+      self.params = LifeParams::new(
+          decay_step,
+          recovery_step,
+          sat_recovery_factor,
+          sat_decay_factor,
+          lum_decay_factor,
+          sat_ghost_factor,
+          hue_drift_strength,
+          hue_lerp_factor,
+      );
   }
 
-
   #[inline]
-  fn index(&self, row: u32, col: u32) -> usize {
+  pub fn index(&self, row: u32, col: u32) -> usize {
     (row * self.width + col) as usize
   }
 
@@ -102,6 +135,17 @@ impl Universe {
           self.index(south, east),
       ]
   }
+
+  pub fn set_grid(&mut self, h: u8, s: u8, l: u8) {
+    for cell in self.cells.iter_mut() {
+      *cell = Individual {
+        hue: h,
+        saturation: s,
+        luminance: l,
+      };
+    }
+  }
+
 
   pub fn randomize(&mut self) {
     let mut rng = rand::rng();
@@ -165,24 +209,31 @@ impl Universe {
   }
 
 
-  /// Advance the universe by a single generation, with soft gradient transitions.
   pub fn tick(&mut self) {
-      let LifeParams { decay_step, recovery_step } = self.params;
+      let LifeParams {
+          decay_step,
+          recovery_step,
+          sat_recovery_factor,
+          sat_decay_factor,
+          lum_decay_factor,
+          sat_ghost_factor,
+          hue_drift_strength,
+          hue_lerp_factor,
+      } = self.params;
 
       for row in 0..self.height {
           for col in 0..self.width {
               let idx = self.index(row, col);
 
-              // Pixels just painted by UI skip simulation.
               if std::mem::take(&mut self.draw_buffer[idx]) {
                   self.next[idx] = self.cells[idx];
                   continue;
               }
 
               let mut live_neighbors = 0u8;
-              let mut hue_sum: f32 = 0.0;
-              let mut sat_sum: f32 = 0.0;
-              let mut lum_sum: f32 = 0.0;
+              let mut hue_sum = 0.0;
+              let mut sat_sum = 0.0;
+              let mut lum_sum = 0.0;
 
               for nidx in self.neighbour_indices(row, col) {
                   let n = self.cells[nidx];
@@ -197,64 +248,59 @@ impl Universe {
               let cell = self.cells[idx];
               let next_cell = match (cell.saturation > 0, live_neighbors) {
                   (true, 2 | 3) => {
-                      // Smooth recovery and color blending
-                      let new_sat = (cell.saturation as f32 + recovery_step as f32 * 0.8).min(255.0);
-                      Individual {
-                          hue: cell.hue,
-                          saturation: new_sat as u8,
-                          luminance: cell.luminance,
-                      }
+                      let new_sat = (cell.saturation as f32 + recovery_step as f32 * sat_recovery_factor).min(255.0);
+                      Individual { hue: cell.hue, saturation: new_sat as u8, luminance: cell.luminance }
                   }
-
                   (true, _) => {
-                      // Gradual fade with slight hue shift for artistic wash-out
-                      let new_sat = (cell.saturation as f32 - decay_step as f32 * 0.6).max(0.0);
+                      let new_sat = (cell.saturation as f32 - decay_step as f32 * sat_decay_factor).max(0.0);
                       Individual {
                           hue: cell.hue,
                           saturation: new_sat as u8,
-                          luminance: (cell.luminance as f32 * 0.95) as u8,
+                          luminance: (cell.luminance as f32 * lum_decay_factor) as u8,
                       }
                   }
-
                   (false, 3) => {
-                    let avg = |sum: f32| (sum / live_neighbors as f32).round() as u8;
+                      let avg = |sum: f32| (sum / live_neighbors as f32).round() as u8;
 
-                    // Convert hue to radians (0..2π), sum as vectors
-                    let mut sum_sin = 0.0f32;
-                    let mut sum_cos = 0.0f32;
+                      let mut strongest_hue = 0u8;
+                      let mut max_lum = 0u8;
+                      for nidx in self.neighbour_indices(row, col) {
+                          let n = self.cells[nidx];
+                          if n.luminance > max_lum {
+                              max_lum = n.luminance;
+                              strongest_hue = n.hue;
+                          }
+                      }
 
-                    for nidx in self.neighbour_indices(row, col) {
-                        let n = self.cells[nidx];
-                        if n.saturation > 0 {
-                            let angle = (n.hue as f32 / 255.0) * std::f32::consts::TAU;
-                            sum_sin += angle.sin();
-                            sum_cos += angle.cos();
-                        }
-                    }
+                      let mut sum_sin = 0.0f32;
+                      let mut sum_cos = 0.0f32;
+                      for nidx in self.neighbour_indices(row, col) {
+                          let n = self.cells[nidx];
+                          if n.saturation > 0 {
+                              let angle = (n.hue as f32 / 255.0) * std::f32::consts::TAU;
+                              sum_sin += angle.sin();
+                              sum_cos += angle.cos();
+                          }
+                      }
 
-                    let base_angle = sum_sin.atan2(sum_cos); // average angle in radians
+                      let mean_angle = sum_sin.atan2(sum_cos);
+                      let strongest_angle = (strongest_hue as f32 / 255.0) * std::f32::consts::TAU;
+                      let mixed_angle = (1.0 - hue_lerp_factor) * mean_angle + hue_lerp_factor * strongest_angle;
+                      let drift = (rand::random::<f32>() - 0.5) * hue_drift_strength * 2.0;
+                      let final_angle = (mixed_angle + drift).rem_euclid(std::f32::consts::TAU);
+                      let hue = ((final_angle / std::f32::consts::TAU) * 255.0).round() as u8;
 
-                    // Drift: small angular offset
-                    let hue_drift_strength = 0.02; // radians — tweak to control drift speed
-                    let drift = rand::random::<f32>() * hue_drift_strength * 2.0 - hue_drift_strength;
-                    let hue_angle = base_angle + drift;
-
-                    // Normalize angle to [0.0, 1.0), then scale to u8 hue
-                    let hue = ((hue_angle / std::f32::consts::TAU).rem_euclid(1.0) * 255.0).round() as u8;
-
-                    Individual {
-                        hue,
-                        saturation: avg(sat_sum),
-                        luminance: avg(lum_sum).saturating_add(1),
-                    }
+                      Individual {
+                          hue,
+                          saturation: avg(sat_sum),
+                          luminance: avg(lum_sum).saturating_add(1),
+                      }
                   }
-
                   _ => {
-                      // Dead cell slowly ghosts away
                       Individual {
                           hue: cell.hue,
-                          saturation: (cell.saturation as f32 * 0.9) as u8,
-                          luminance: (cell.luminance as f32 * 0.8) as u8,
+                          saturation: (cell.saturation as f32 * sat_ghost_factor) as u8,
+                          luminance: (cell.luminance as f32 * lum_decay_factor) as u8,
                       }
                   }
               };

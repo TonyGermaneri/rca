@@ -5,3 +5,15 @@ html, body {
     color: #fff;
     background-color: #000;
 }
+.panel {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  cursor: move;
+  user-select: none;
+}
