@@ -1,14 +1,46 @@
 use wasm_bindgen::prelude::*;
 use rand::Rng;
 
+/// Parameters controlling how cells gain or lose brightness.
+/// They can be tweaked while the simulation is running to explore different
+/// ecological dynamics without recompiling.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug)]
+pub struct LifeParams {
+    /// How quickly brightness fades when the environment is poor (higher ⇒ faster fade)
+    pub decay_step: u8,
+    /// How quickly brightness recovers in a healthy environment (higher ⇒ faster brighten)
+    pub recovery_step: u8,
+}
+
+
+
+/// The simulation universe.  The `params` field makes the life‑cycle tunable at runtime.
 #[wasm_bindgen]
 pub struct Universe {
-  width: u32,
-  height: u32,
-  cells: Vec<Individual>,
-  next: Vec<Individual>,
-  draw_buffer: Vec<bool>,
+    width: u32,
+    height: u32,
+    cells: Vec<Individual>,
+    next: Vec<Individual>,
+    draw_buffer: Vec<bool>,
+    params: LifeParams,
 }
+
+
+impl LifeParams {
+    /// Construct new parameters at runtime in a clear and ergonomic way.
+    pub fn new(decay_step: u8, recovery_step: u8) -> Self {
+        Self { decay_step, recovery_step }
+    }
+}
+
+impl Default for LifeParams {
+    fn default() -> Self {
+        Self::new(1, 1)
+    }
+}
+
+
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -21,49 +53,64 @@ struct Individual {
 #[wasm_bindgen]
 impl Universe {
   #[wasm_bindgen(constructor)]
-  pub fn new(width: u32, height: u32) -> Universe {
-    let size = (width * height) as usize;
-    Universe {
-      width,
-      height,
-      cells: vec![Individual::default(); size],
-      next: vec![Individual::default(); size],
-      draw_buffer: vec![false; size],
-    }
+  pub fn new(width: u32, height: u32) -> Self {
+      let size = (width * height) as usize;
+      Self {
+          width,
+          height,
+          cells: vec![Individual::default(); size],
+          next: vec![Individual::default(); size],
+          draw_buffer: vec![false; size],
+          params: LifeParams::default(),
+      }
   }
+
+
+  /// Create a universe with custom parameters.
+  pub fn with_params(width: u32, height: u32, params: LifeParams) -> Self {
+      Self { params, ..Self::new(width, height) }
+  }
+
+  /// Update the life‑cycle parameters while the simulation is running.
+  /// Call with primitive values so UI sliders can feed directly into the engine.
+  pub fn set_params(&mut self, decay_step: u8, recovery_step: u8) {
+      self.params = LifeParams::new(decay_step, recovery_step);
+  }
+
+
   #[inline]
   fn index(&self, row: u32, col: u32) -> usize {
     (row * self.width + col) as usize
   }
 
+  /// Returns the eight neighbour indices of `(row, col)` on a toroidal grid
   #[inline]
-  fn live_neighbor_count(&self, row: u32, col: u32) -> u8 {
-      let w = self.width;
-      let h = self.height;
-      let mut count = 0;
-      let neighbors = [
-          (-1, -1), (-1,  0), (-1, 1),
-          ( 0, -1),          ( 0, 1),
-          ( 1, -1), ( 1,  0), (1, 1),
-      ];
-      for (dr, dc) in neighbors {
-          let r = ((row as i32 + dr + h as i32) % h as i32) as u32;
-          let c = ((col as i32 + dc + w as i32) % w as i32) as u32;
-          let idx = self.index(r, c);
-          if self.cells[idx].luminance > 0 {
-              count += 1;
-          }
-      }
-      count
+  fn neighbour_indices(&self, row: u32, col: u32) -> [usize; 8] {
+      let north = (row + self.height - 1) % self.height;
+      let south = (row + 1) % self.height;
+      let west  = (col + self.width  - 1) % self.width;
+      let east  = (col + 1) % self.width;
+
+      [
+          self.index(north, west),
+          self.index(north, col),
+          self.index(north, east),
+          self.index(row,   west),
+          self.index(row,   east),
+          self.index(south, west),
+          self.index(south, col),
+          self.index(south, east),
+      ]
   }
+
   pub fn randomize(&mut self) {
     let mut rng = rand::rng();
     for cell in self.cells.iter_mut() {
       if rng.random_bool(0.5) {
         *cell = Individual {
           hue: rng.random_range(0..=255),
-          saturation: rng.random_range(100..=255),
-          luminance: 255,
+          saturation: 255,
+          luminance: rng.random_range(100..=255),
         };
       } else {
         *cell = Individual::default();
@@ -81,40 +128,141 @@ impl Universe {
     }
   }
 
-  pub fn tick(&mut self) {
+  pub fn draw_brush(&mut self, cx: u32, cy: u32, radius: u32, add_mode: bool, h: u8, s: u8, l: u8) {
       let mut rng = rand::rng();
+      let r2 = (radius * radius) as i32;
+
+      for dy in -(radius as i32)..=(radius as i32) {
+          let y = cy as i32 + dy;
+          if y < 0 || y >= self.height as i32 {
+              continue;
+          }
+          let dy2 = dy * dy;
+
+          for dx in -(radius as i32)..=(radius as i32) {
+              let dx2 = dx * dx;
+              if dx2 + dy2 > r2 {
+                  continue;
+              }
+              let x = cx as i32 + dx;
+              if x < 0 || x >= self.width as i32 {
+                  continue;
+              }
+
+              let (hue, sat, lum) = if add_mode {
+                  (
+                      h,
+                      s,
+                      l,
+                  )
+              } else {
+                  (0, 0, 0)
+              };
+
+              self.set_cell(y as u32, x as u32, hue, sat, lum);
+          }
+      }
+  }
+
+
+  /// Advance the universe by a single generation, with soft gradient transitions.
+  pub fn tick(&mut self) {
+      let LifeParams { decay_step, recovery_step } = self.params;
+
       for row in 0..self.height {
           for col in 0..self.width {
               let idx = self.index(row, col);
-              if self.draw_buffer[idx] {
+
+              // Pixels just painted by UI skip simulation.
+              if std::mem::take(&mut self.draw_buffer[idx]) {
                   self.next[idx] = self.cells[idx];
-                  self.draw_buffer[idx] = false;
                   continue;
               }
-              let live_neighbors = self.live_neighbor_count(row, col);
+
+              let mut live_neighbors = 0u8;
+              let mut hue_sum: f32 = 0.0;
+              let mut sat_sum: f32 = 0.0;
+              let mut lum_sum: f32 = 0.0;
+
+              for nidx in self.neighbour_indices(row, col) {
+                  let n = self.cells[nidx];
+                  if n.saturation > 0 {
+                      live_neighbors += 1;
+                      hue_sum += n.hue as f32;
+                      sat_sum += n.saturation as f32;
+                      lum_sum += n.luminance as f32;
+                  }
+              }
+
               let cell = self.cells[idx];
-              self.next[idx] = match (cell.luminance > 0, live_neighbors) {
-                  (true, 2) => cell,
-                  (_, 3) => {
-                      if cell.luminance > 0 {
-                          // survive with decay
-                          Individual {
-                              luminance: cell.luminance.saturating_sub(1),
-                              ..cell
-                          }
-                      } else {
-                          // new cell
-                          Individual {
-                              hue: rng.random_range(0..=255),
-                              saturation: rng.random_range(180..=255),
-                              luminance: 255,
-                          }
+              let next_cell = match (cell.saturation > 0, live_neighbors) {
+                  (true, 2 | 3) => {
+                      // Smooth recovery and color blending
+                      let new_sat = (cell.saturation as f32 + recovery_step as f32 * 0.8).min(255.0);
+                      Individual {
+                          hue: cell.hue,
+                          saturation: new_sat as u8,
+                          luminance: cell.luminance,
                       }
                   }
-                  _ => Individual::default(),
+
+                  (true, _) => {
+                      // Gradual fade with slight hue shift for artistic wash-out
+                      let new_sat = (cell.saturation as f32 - decay_step as f32 * 0.6).max(0.0);
+                      Individual {
+                          hue: cell.hue,
+                          saturation: new_sat as u8,
+                          luminance: (cell.luminance as f32 * 0.95) as u8,
+                      }
+                  }
+
+                  (false, 3) => {
+                    let avg = |sum: f32| (sum / live_neighbors as f32).round() as u8;
+
+                    // Convert hue to radians (0..2π), sum as vectors
+                    let mut sum_sin = 0.0f32;
+                    let mut sum_cos = 0.0f32;
+
+                    for nidx in self.neighbour_indices(row, col) {
+                        let n = self.cells[nidx];
+                        if n.saturation > 0 {
+                            let angle = (n.hue as f32 / 255.0) * std::f32::consts::TAU;
+                            sum_sin += angle.sin();
+                            sum_cos += angle.cos();
+                        }
+                    }
+
+                    let base_angle = sum_sin.atan2(sum_cos); // average angle in radians
+
+                    // Drift: small angular offset
+                    let hue_drift_strength = 0.02; // radians — tweak to control drift speed
+                    let drift = rand::random::<f32>() * hue_drift_strength * 2.0 - hue_drift_strength;
+                    let hue_angle = base_angle + drift;
+
+                    // Normalize angle to [0.0, 1.0), then scale to u8 hue
+                    let hue = ((hue_angle / std::f32::consts::TAU).rem_euclid(1.0) * 255.0).round() as u8;
+
+                    Individual {
+                        hue,
+                        saturation: avg(sat_sum),
+                        luminance: avg(lum_sum).saturating_add(1),
+                    }
+                  }
+
+                  _ => {
+                      // Dead cell slowly ghosts away
+                      Individual {
+                          hue: cell.hue,
+                          saturation: (cell.saturation as f32 * 0.9) as u8,
+                          luminance: (cell.luminance as f32 * 0.8) as u8,
+                      }
+                  }
               };
+
+              self.next[idx] = next_cell;
           }
       }
+
       std::mem::swap(&mut self.cells, &mut self.next);
   }
 
