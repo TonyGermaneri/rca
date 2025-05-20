@@ -1,4 +1,6 @@
-# Auth Wasmer Package
+# RCA Wasmer Package
+
+Rust Cellular Automata
 
 For random values to work run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"'
 

@@ -2,7 +2,7 @@
 // Added keyboard controls:  
 //   '-' / '='  → decrease / increase `decay_step`  
 //   '[' / ']'  → decrease / increase `recovery_step`
-
+// 6152 770 
 import './style.css'
 import init, { Universe } from '@ca/ca';
 
@@ -22,6 +22,7 @@ import init, { Universe } from '@ca/ca';
   universe.randomize();
 
   // Runtime‑tweakable life‑cycle parameters (default from Rust)
+  let rule = 770;
   let decayStep    = 1;
   let recoveryStep = 1;
   let satRecoveryFactor = 0.8;
@@ -31,11 +32,18 @@ import init, { Universe } from '@ca/ca';
   let hueDriftStrength = 0.01;
   let hueLerpFactor = 0.1;
   let brushRadius = 40;
+  let brushMode = "brush";
   let stampImageData = null;
   let isDragging = false;
   let dragOffsetX = 0;
   let dragOffsetY = 0;
 
+  let paused = false;
+  let drawing      = false;
+  let drawMode     = 'add'; // 'add' | 'erase'
+  let currentColorH = 0;
+  let currentColorS = 0;
+  let currentColorL = 0;
 
   // Canvas & WebGL bootstrapping ────────────────────────────────────────────
   const canvas = document.createElement('canvas');
@@ -43,7 +51,22 @@ import init, { Universe } from '@ca/ca';
   const info = document.createElement('div');
   const indv = document.createElement('div');
   panel.className = 'panel';
+  window.addEventListener('keydown', (e) => {
+    switch (e.key) {
+      // colour shortcuts & actions (existing)
+      case 'c':  universe.clear();    break;
+      case 'b':  setBackgroundImage();    break;
+      case 'r':  universe.randomize(); break;
+      case 'h':  panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; break;
+      case 'p':  paused = !paused; if(!paused){render();} break;
+      case 's':  render(); break;
+      default:
+        return; // quit for keys we don’t handle
+    }
+  });
+
   let controls = {
+    rule:              { tag: 'input', props: { type: 'number', value: rule, oninput: (e) => { rule = parseInt(e.target.value); } } },
     colorPicker:       { tag: 'input', props: { type: 'color', oninput: updateColors } },
     brushSize:         { tag: 'input', props: { type: 'range', min: 1, max: 200, value: brushRadius, oninput: (e) => { brushRadius = parseInt(e.target.value); updateInfo(); } }},
     randomize:         { tag: 'button', innerHTML: 'Randomize', props: { onclick: () => { universe.randomize(); updateInfo(); }}},
@@ -59,12 +82,146 @@ import init, { Universe } from '@ca/ca';
     hueDriftStrength:  { tag: 'input', props: { type: 'range', min: 0.0, max: 0.2, step: 0.001, value: hueDriftStrength, oninput: (e) => { hueDriftStrength = parseFloat(e.target.value); updateInfo(); }}},
     hueLerpFactor:     { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: hueLerpFactor, oninput: (e) => { hueLerpFactor = parseFloat(e.target.value); updateInfo(); }}},
     imageUpload:       { tag: 'input', props: { type: 'file', accept: 'image/*', onchange: handleImageUpload }},
+    brushMode: {
+      tag: 'select',
+      props: {
+        onchange: (e) => { brushMode = e.target.value; }
+      },
+      children: [
+        { tag: 'option', props: { value: 'brush' }, innerHTML: 'Brush' },
+        { tag: 'option', props: { value: 'stamp' }, innerHTML: 'Stamp' },
+      ]
+    },
+    backgroundImageUpload: {
+      tag: 'input',
+      props: {
+        type: 'file',
+        accept: 'image/*',
+        onchange: handleBackgroundImageUpload
+      }
+    },
+
+    backgroundModeSelect: {
+      tag: 'select',
+      props: {
+        onchange: handleBackgroundModeChange
+      },
+      children: [
+        { tag: 'option', props: { value: 'stretch' }, innerHTML: 'Stretch' },
+        { tag: 'option', props: { value: 'full' }, innerHTML: 'Full' },
+        { tag: 'option', props: { value: 'repeat' }, innerHTML: 'Repeat' },
+        { tag: 'option', props: { value: 'center' }, innerHTML: 'Center' }
+      ]
+    },
+
+    setBackgroundButton: {
+      tag: 'button',
+      props: {
+        onclick: setBackgroundImage
+      },
+      innerHTML: 'Set Background'
+    }
   };
   controls = createControls(controls);
   Object.values(controls).forEach((control) => {panel.appendChild(control);})
   panel.appendChild(info);
   panel.appendChild(indv);
 
+
+  let backgroundImageData = null;
+  let backgroundMode = 'stretch';
+
+  function handleBackgroundImageUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        // You might convert this to a canvas or store it for WASM background drawing
+        backgroundImageData = img;
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function handleBackgroundModeChange(event) {
+    backgroundMode = event.target.value;
+  }
+
+  function setBackgroundImage() {
+    if (!backgroundImageData) {
+      alert("Please upload a background image first.");
+      return;
+    }
+
+    const universeWidth = universe.width();
+    const universeHeight = universe.height();
+
+    // Create a temporary canvas to draw and extract image data
+    const tempCanvas = document.createElement('canvas');
+    const ctx = tempCanvas.getContext('2d');
+
+    let drawWidth, drawHeight;
+    let offsetX = 0, offsetY = 0;
+
+    switch (backgroundMode) {
+      case 'stretch':
+        drawWidth = universeWidth;
+        drawHeight = universeHeight;
+        tempCanvas.width = drawWidth;
+        tempCanvas.height = drawHeight;
+        ctx.drawImage(backgroundImageData, 0, 0, drawWidth, drawHeight);
+        break;
+
+      case 'full': {
+        const scale = Math.max(universeWidth / backgroundImageData.width, universeHeight / backgroundImageData.height);
+        drawWidth = backgroundImageData.width * scale;
+        drawHeight = backgroundImageData.height * scale;
+        offsetX = (universeWidth - drawWidth) / 2;
+        offsetY = (universeHeight - drawHeight) / 2;
+        tempCanvas.width = universeWidth;
+        tempCanvas.height = universeHeight;
+        ctx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+        ctx.drawImage(backgroundImageData, offsetX, offsetY, drawWidth, drawHeight);
+        break;
+      }
+
+      case 'center':
+        drawWidth = backgroundImageData.width;
+        drawHeight = backgroundImageData.height;
+        tempCanvas.width = drawWidth;
+        tempCanvas.height = drawHeight;
+        ctx.drawImage(backgroundImageData, 0, 0);
+        offsetX = (universeWidth - drawWidth) / 2;
+        offsetY = (universeHeight - drawHeight) / 2;
+        break;
+
+      case 'repeat':
+        tempCanvas.width = universeWidth;
+        tempCanvas.height = universeHeight;
+        const pattern = ctx.createPattern(backgroundImageData, 'repeat');
+        ctx.fillStyle = pattern;
+        ctx.fillRect(0, 0, universeWidth, universeHeight);
+        drawWidth = universeWidth;
+        drawHeight = universeHeight;
+        break;
+
+      default:
+        console.warn('Unknown background mode:', backgroundMode);
+        return;
+    }
+
+    const imageData = ctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+    const data = new Uint8Array(imageData.data.buffer);
+
+    const cx = Math.floor((offsetX || 0) + drawWidth / 2);
+    const cy = Math.floor((offsetY || 0) + drawHeight / 2);
+
+    universe.draw_stamp_at(cx, cy, imageData.width, imageData.height, data);
+  }
 
   function handleImageUpload(e) {
     const file = e.target.files[0];
@@ -89,6 +246,7 @@ import init, { Universe } from '@ca/ca';
   function updateInfo() {
     info.innerHTML = `
       Brush: ${brushRadius}<br>
+      Rule: ${rule}<br>
       Decay Step: ${decayStep}, Recovery Step: ${recoveryStep}<br>
       Sat Recovery: ${satRecoveryFactor.toFixed(2)}, Sat Decay: ${satDecayFactor.toFixed(2)}<br>
       Lum Decay: ${lumDecayFactor.toFixed(2)}, Sat Ghost: ${satGhostFactor.toFixed(2)}<br>
@@ -117,6 +275,7 @@ import init, { Universe } from '@ca/ca';
   }
   function createControls(controls) {
     const elements = {};
+
     for (const [key, config] of Object.entries(controls)) {
       const container = document.createElement('div');
       container.style.display = 'flex';
@@ -127,10 +286,32 @@ import init, { Universe } from '@ca/ca';
       label.textContent = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
 
       const el = document.createElement(config.tag);
-      if (config.innerHTML) el.innerHTML = config.innerHTML;
+
+      if (config.innerHTML) {
+        el.innerHTML = config.innerHTML;
+      }
+
       if (config.props) {
         for (const [prop, value] of Object.entries(config.props)) {
           el[prop] = value;
+        }
+      }
+
+      if (Array.isArray(config.children)) {
+        for (const childConfig of config.children) {
+          const child = document.createElement(childConfig.tag);
+
+          if (childConfig.innerHTML) {
+            child.innerHTML = childConfig.innerHTML;
+          }
+
+          if (childConfig.props) {
+            for (const [prop, value] of Object.entries(childConfig.props)) {
+              child[prop] = value;
+            }
+          }
+
+          el.appendChild(child);
         }
       }
 
@@ -138,21 +319,9 @@ import init, { Universe } from '@ca/ca';
       container.appendChild(el);
       elements[key] = container;
     }
+
     return elements;
   }
-
-  window.addEventListener('keydown', (e) => {
-    switch (e.key) {
-      // colour shortcuts & actions (existing)
-      case 'c':  universe.clear();    break;
-      case 'r':  universe.randomize(); break;
-      case 'h':  panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; break;
-      case 'p':  paused = !paused; if(!paused){render();} break;
-      case 's':  render(); break;
-      default:
-        return; // quit for keys we don’t handle
-    }
-  });
 
   document.querySelector('#app')!.appendChild(canvas);
   document.querySelector('#app')!.appendChild(panel);
@@ -262,66 +431,25 @@ import init, { Universe } from '@ca/ca';
   function drawAtMouse() {
     const { x, y } = mousePosition;
 
-    if (!stampImageData) {
-      universe.draw_brush(x, y, brushRadius, drawMode === 'add', currentColorH, currentColorS, currentColorL);
-      return;
+
+    if (brushMode === "stamp") {
+      if (!stampImageData) { return; }
+
+      const w = stampImageData.width;
+      const h = stampImageData.height;
+      const data = stampImageData.data;
+
+      universe.draw_stamp_at(x, y, w, h, data);
     }
 
-    const w = stampImageData.width;
-    const h = stampImageData.height;
-    const data = stampImageData.data;
-
-    const cells = new Uint8Array(memory.buffer, universe.cells_ptr(), universe.cells_len());
-
-    for (let sy = 0; sy < h; sy++) {
-      const uy = y + sy - Math.floor(h / 2);
-      if (uy < 0 || uy >= universe.height()) continue;
-
-      for (let sx = 0; sx < w; sx++) {
-        const ux = x + sx - Math.floor(w / 2);
-        if (ux < 0 || ux >= universe.width()) continue;
-
-        const i = (sy * w + sx) * 4;
-        const r = data[i]     / 255;
-        const g = data[i + 1] / 255;
-        const b = data[i + 2] / 255;
-        const a = data[i + 3] / 255;
-
-        if (a <= 0.001) continue; // Fully transparent — skip
-
-        const { h, s, l } = rgbToHsl(r, g, b);
-        const targetH = Math.round(h * 255);
-        const targetS = Math.round(s * 255);
-        const targetL = Math.round(l * 255);
-
-        const offset = universe.index(ux, uy) * 3;
-        const oldH = cells[offset];
-        const oldS = cells[offset + 1];
-        const oldL = cells[offset + 2];
-
-        let newH, newS, newL;
-
-        if (a >= 0.999) {
-          // Fully opaque — direct overwrite
-          newH = targetH;
-          newS = targetS;
-          newL = targetL;
-        } else {
-          // Blend based on alpha
-          const lerp = (a, b, t) => a * (1 - t) + b * t;
-          newH = Math.round(lerp(oldH, targetH, a));
-          newS = Math.round(lerp(oldS, targetS, a));
-          newL = Math.round(lerp(oldL, targetL, a));
-        }
-
-        universe.set_cell(uy, ux, newH, newS, newL);
-      }
+    if (brushMode === "brush") {
+      // cx: u32, cy: u32, radius: u32, add_mode: bool, h: u8, s: u8, l: u8
+      universe.draw_brush(x, y, brushRadius, true, currentColorH, currentColorS, currentColorL);
     }
-
-
-
 
   }
+
+
 
   function setGrid(h, s, l) {
     universe.set_grid(h, s, l);
@@ -329,13 +457,7 @@ import init, { Universe } from '@ca/ca';
 
     
 
-  // ── Interaction State ────────────────────────────────────────────────────
-  let paused = false;
-  let drawing      = false;
-  let drawMode     = 'add'; // 'add' | 'erase'
-  let currentColorH = 255;
-  let currentColorS = 255;
-  let currentColorL = 128;
+
 
   // ── Event listeners ──────────────────────────────────────────────────────
   canvas.addEventListener('mousedown', (e) => {
@@ -416,8 +538,14 @@ vec3 hsl2rgb(vec3 hsl) {
 }
 void main() {
   vec3 hsl = texture2D(u_texture, vec2(v_texcoord.x, 1.0 - v_texcoord.y)).rgb;
-  
-  gl_FragColor = vec4(hsl2rgb(vec3(hsl.z, hsl.y, hsl.x)), 1.0);
+
+  float hue = hsl.r;
+  float sat = hsl.g;
+  float lum = hsl.b;
+
+  vec3 rgb = hsl2rgb(vec3(hue, sat, lum)); 
+
+  gl_FragColor = vec4(rgb, 1.0);
 }`;
 
   function compileShader(type, source) {
@@ -462,6 +590,7 @@ void main() {
 
     // Propagate user‑defined parameters into WASM before each tick
     universe.set_params(
+      rule,
       decayStep,
       recoveryStep,
       satRecoveryFactor,
