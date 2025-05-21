@@ -19,7 +19,7 @@ import init, { Universe } from '@ca/ca';
   const uHeight = Math.floor(window.innerHeight);
 
   const universe = new Universe(uWidth, uHeight);
-  universe.randomize();
+  // universe.randomize();
 
   let svgShapes;
   let backgroundImageData = null;
@@ -47,8 +47,8 @@ import init, { Universe } from '@ca/ca';
   let satGhostFactor = 0.9;
   let hueDriftStrength = 0.1;
   let hueLerpFactor = 0.1;
-  let hueAmplitude = 0.1;
-  let saturationAmplitude = 0.1;
+  let hueAmplitude = 0.01;
+  let saturationAmplitude = 0.01;
   let ruleChangeRate = 0.1;
   let brushRadius = 40;
   let brushMode = "brush";
@@ -69,12 +69,16 @@ import init, { Universe } from '@ca/ca';
   const panel = document.createElement('div');
   const info = document.createElement('div');
   const indv = document.createElement('div');
+  const hint = document.createElement('div');
   panel.className = 'panel';
+  panel.style.display = 'none';
+  hint.innerHTML = "Press H to show controls";
+  hint.className = "hint";
   window.addEventListener('keydown', (e) => {
-    switch (e.key) {
+    switch (e.key.toLowerCase()) {
       // colour shortcuts & actions (existing)
-      case 'ArrowUp':  e.preventDefault(); rule += 1; document.getElementById('rule_input').value = rule;   break;
-      case 'ArrowDown':  e.preventDefault(); rule -= 1; document.getElementById('rule_input').value = rule;   break;
+      case 'arrowup':  e.preventDefault(); rule += 1; document.getElementById('rule_input').value = rule;   break;
+      case 'arrowdown':  e.preventDefault(); rule -= 1; document.getElementById('rule_input').value = rule;   break;
       case 'c':  universe.clear();    break;
       case 'b':  setBackgroundImage();    break;
       case 'a':  universe.randomize(); break;
@@ -143,34 +147,31 @@ import init, { Universe } from '@ca/ca';
   }
   updateShapes();
 
-
-  // handleBuiltInImageChange(svgShapes.circle);
+  handleBuiltInImageChange(svgShapes.circle);
 
   let controlSet = {
     rule:                { tag: 'input', props: { id: 'rule_input', type: 'number', value: rule, oninput: (e) => { rule = parseInt(e.target.value); } } },
     randomize:           { tag: 'button', innerHTML: 'Randomize', props: { onclick: randomizeParams }},
     shapeColor:          { tag: 'input', props: { type: 'color', oninput: (e) => { shapeColor = e.target.value; updateShapes(); }, value: backgroundColor } },
-    shapeSizeX:          { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: shapeSizeX, oninput: (e) => { shapeSizeX = parseFloat(e.target.value); updateShapes(); }}},
-    shapeSizeY:          { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: shapeSizeY, oninput: (e) => { shapeSizeY = parseFloat(e.target.value); updateShapes(); }}},
     brushColor:          { tag: 'input', props: { type: 'color', oninput: updateColors, value: brushColor } },
     backgroundColor:     { tag: 'input', props: { type: 'color', oninput: (e) => { backgroundColor = e.target.value; document.body.style.backgroundColor = backgroundColor; }, value: backgroundColor } },
-    brushSize:           { tag: 'input', props: { type: 'range', min: 1, max: 200, value: brushRadius, oninput: (e) => { brushRadius = parseInt(e.target.value); updateInfo(); } }},
+    brushSize:           { tag: 'input', props: { type: 'range', min: 1, max: 200, value: brushRadius, oninput: (e) => { brushRadius = parseInt(e.target.value);  } }},
     pause:               { tag: 'input', props: { type: 'checkbox', onclick: (e) => { paused = e.target.checked; if (!paused) { render(); } }}},
-    clear:               { tag: 'button', innerHTML: 'Clear', props: { onclick: () => { universe.clear(); updateInfo(); }}},
-    setColor:            { tag: 'button', innerHTML: 'Set', props: { onclick: () => { universe.set_grid(currentColorH, currentColorS, currentColorL); updateInfo(); }}},
-    decaySlider:         { tag: 'input', props: { type: 'range', min: 1, max: 500, value: decayStep, oninput: (e) => { decayStep = parseInt(e.target.value); updateInfo(); }}},
-    recoverySlider:      { tag: 'input', props: { type: 'range', min: 1, max: 500, value: recoveryStep, oninput: (e) => { recoveryStep = parseInt(e.target.value); updateInfo(); }}},
+    clear:               { tag: 'button', innerHTML: 'Clear', props: { onclick: () => { universe.clear();  }}},
+    setColor:            { tag: 'button', innerHTML: 'Set', props: { onclick: () => { universe.set_grid(currentColorH, currentColorS, currentColorL);  }}},
+    decaySlider:         { tag: 'input', props: { type: 'range', min: 1, max: 500, value: decayStep, oninput: (e) => { decayStep = parseInt(e.target.value);  }}},
+    recoverySlider:      { tag: 'input', props: { type: 'range', min: 1, max: 500, value: recoveryStep, oninput: (e) => { recoveryStep = parseInt(e.target.value);  }}},
     
-    satRecoveryFactor:   { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: satRecoveryFactor, oninput: (e) => { satRecoveryFactor = parseFloat(e.target.value); updateInfo(); }}},
-    satDecayFactor:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: satDecayFactor, oninput: (e) => { satDecayFactor = parseFloat(e.target.value); updateInfo(); }}},
-    lumDecayFactor:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: lumDecayFactor, oninput: (e) => { lumDecayFactor = parseFloat(e.target.value); updateInfo(); }}},
-    lifeDecayFactor:     { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: lifeDecayFactor, oninput: (e) => { lifeDecayFactor = parseFloat(e.target.value); updateInfo(); }}},
-    satGhostFactor:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: satGhostFactor, oninput: (e) => { satGhostFactor = parseFloat(e.target.value); updateInfo(); }}},
-    bgHueAmplitude:      { tag: 'input', props: { type: 'range', min: 0.0, max: 2.0, step: 0.01, value: hueAmplitude, oninput: (e) => { hueAmplitude = parseFloat(e.target.value); updateInfo(); }}},
-    bgSatAmplitude:      { tag: 'input', props: { type: 'range', min: 0.0, max: 2.0, step: 0.01, value: saturationAmplitude, oninput: (e) => { saturationAmplitude = parseFloat(e.target.value); updateInfo(); }}},
-    hueDriftStrength:    { tag: 'input', props: { type: 'range', min: 0.0, max: 0.2, step: 0.001, value: hueDriftStrength, oninput: (e) => { hueDriftStrength = parseFloat(e.target.value); updateInfo(); }}},
-    hueLerpFactor:       { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: hueLerpFactor, oninput: (e) => { hueLerpFactor = parseFloat(e.target.value); updateInfo(); }}},
-    ruleChangeRate:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: ruleChangeRate, oninput: (e) => { ruleChangeRate = parseFloat(e.target.value); updateInfo(); }}},
+    satRecoveryFactor:   { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: satRecoveryFactor, oninput: (e) => { satRecoveryFactor = parseFloat(e.target.value);  }}},
+    satDecayFactor:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: satDecayFactor, oninput: (e) => { satDecayFactor = parseFloat(e.target.value);  }}},
+    lumDecayFactor:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: lumDecayFactor, oninput: (e) => { lumDecayFactor = parseFloat(e.target.value);  }}},
+    lifeDecayFactor:     { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: lifeDecayFactor, oninput: (e) => { lifeDecayFactor = parseFloat(e.target.value);  }}},
+    satGhostFactor:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: satGhostFactor, oninput: (e) => { satGhostFactor = parseFloat(e.target.value);  }}},
+    bgHueAmplitude:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: hueAmplitude, oninput: (e) => { hueAmplitude = parseFloat(e.target.value);  }}},
+    bgSatAmplitude:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: saturationAmplitude, oninput: (e) => { saturationAmplitude = parseFloat(e.target.value);  }}},
+    hueDriftStrength:    { tag: 'input', props: { type: 'range', min: 0.0, max: 0.2, step: 0.001, value: hueDriftStrength, oninput: (e) => { hueDriftStrength = parseFloat(e.target.value);  }}},
+    hueLerpFactor:       { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: hueLerpFactor, oninput: (e) => { hueLerpFactor = parseFloat(e.target.value);  }}},
+    ruleChangeRate:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: ruleChangeRate, oninput: (e) => { ruleChangeRate = parseFloat(e.target.value);  }}},
     autoRotate:          { tag: 'input', props: { type: 'checkbox', onclick: (e) => { autoRotate = e.target.checked; if (!autoRotate) { render(); } }}},
     rotateHue:          { tag: 'input', props: { type: 'checkbox', onclick: (e) => { rotateHue = e.target.checked; if (!rotateHue) { render(); } }}},
     stampOnRotate:       { tag: 'input', props: { type: 'checkbox', onclick: (e) => { stampOnRotate = e.target.checked; if (!stampOnRotate) { render(); } }}},
@@ -336,7 +337,7 @@ import init, { Universe } from '@ca/ca';
       universe.randomize();
     }
 
-    updateInfo();
+    
   }
 
   controlIds = Object.keys(controlSet);
@@ -346,7 +347,7 @@ import init, { Universe } from '@ca/ca';
   panel.appendChild(indv);
 
 
-
+  updateInfo()
 
   function handleBackgroundImageUpload(event) {
     const file = event.target.files[0];
@@ -462,12 +463,16 @@ import init, { Universe } from '@ca/ca';
   }
   function updateInfo() {
     info.innerHTML = `
-      Brush: ${brushRadius}<br>
-      Rule: ${rule}<br>
-      Decay Step: ${decayStep}, Recovery Step: ${recoveryStep}<br>
-      Sat Recovery: ${satRecoveryFactor.toFixed(2)}, Sat Decay: ${satDecayFactor.toFixed(2)}<br>
-      Lum Decay: ${lumDecayFactor.toFixed(2)}, Life Decay: ${lifeDecayFactor.toFixed(2)}, Sat Ghost: ${satGhostFactor.toFixed(2)}<br>
-      Hue Drift: ${hueDriftStrength.toFixed(3)}, Hue Lerp: ${hueLerpFactor.toFixed(2)}
+      32bit HLSA Rust Cellular Automata<br>
+      h: Hide this dialog<br>
+      Arrow Up: Next Rule<br>
+      Arrow Up: Previous Rule<br>
+      c: Clear<br>
+      b: Set Background Image<br>
+      a: Set Random Pixels<br>
+      r: Randomize Params<br>
+      p: Pause simluation<br>
+      s: Step forward (when paused)
     `;
   }
   function updateIndv(cells) {
@@ -631,6 +636,7 @@ import init, { Universe } from '@ca/ca';
 
   document.querySelector('#app').appendChild(canvas);
   document.querySelector('#app').appendChild(panel);
+  document.querySelector('#app').appendChild(hint);
 
   panel.addEventListener('mousedown', (e) => {
     if (e.target !== panel) return; // Only drag from panel background
@@ -949,6 +955,6 @@ void main() {
       requestAnimationFrame(render);
     }
   }
-  updateInfo();
+  
   render();
 })();

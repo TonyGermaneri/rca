@@ -17,3 +17,25 @@ html, body {
   cursor: move;
   user-select: none;
 }
+
+.hint {
+  animation: fadeOutAndHide 3.5s forwards;
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+}
+
+/* Keyframes: delay 3s, fade over 0.5s */
+@keyframes fadeOutAndHide {
+  0% {
+    opacity: 1;
+    display: block;
+  }
+  85.7% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    display: none;
+  }
+}
