@@ -1,0 +1,19 @@
+{
+  "name": "rca",
+  "version": "1.0.0",
+  "description": "rca",
+  "main": "./web-client/dist/index.html",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TonyGermaneri/rca.git"
+  },
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/TonyGermaneri/rca/issues"
+  },
+  "homepage": "https://github.com/TonyGermaneri/rca#readme"
+}
