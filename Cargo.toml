@@ -2,6 +2,9 @@
 name = "ca"
 version = "0.1.0"
 edition = "2021"
+description = "Rust Cellular Automata"
+repository = "https://github.com/TonyGermaneri/rca"
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -29,8 +32,7 @@ default = ["console_error_panic_hook", "wee_alloc"]
 [dependencies.web-sys]
 version = "0.3.4"
 features = ["Headers", "Request", "RequestInit", "RequestMode", "Response", "Window", "HtmlElement", "Document"]
-wai-bindgen-rust = "0.2.3"
-wasm-bindgen = "0.2.91"
+
 
 [lib]
 crate-type = ["cdylib", "rlib"]

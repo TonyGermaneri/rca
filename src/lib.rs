@@ -1,6 +1,8 @@
 use wasm_bindgen::prelude::*;
 use rand::Rng;
 
+pub const E: f32 = 2.71828182845904523536028747135266250_f32; // 2.7182818284590451f64
+
 /// Parameters controlling how cells gain or lose brightness.
 /// They can be tweaked while the simulation is running to explore different
 /// ecological dynamics without recompiling.
@@ -13,6 +15,7 @@ pub struct LifeParams {
     pub sat_recovery_factor: f32,
     pub sat_decay_factor: f32,
     pub lum_decay_factor: f32,
+    pub life_decay_factor: f32,
     pub sat_ghost_factor: f32,
     pub hue_drift_strength: f32,
     pub hue_lerp_factor: f32,
@@ -29,7 +32,6 @@ pub struct Universe {
     params: LifeParams,
 }
 
-
 impl LifeParams {
     pub fn new(
         rule: u32,
@@ -38,6 +40,7 @@ impl LifeParams {
         sat_recovery_factor: f32,
         sat_decay_factor: f32,
         lum_decay_factor: f32,
+        life_decay_factor: f32,
         sat_ghost_factor: f32,
         hue_drift_strength: f32,
         hue_lerp_factor: f32,
@@ -49,6 +52,7 @@ impl LifeParams {
             sat_recovery_factor,
             sat_decay_factor,
             lum_decay_factor,
+            life_decay_factor,
             sat_ghost_factor,
             hue_drift_strength,
             hue_lerp_factor,
@@ -58,7 +62,7 @@ impl LifeParams {
 
 impl Default for LifeParams {
     fn default() -> Self {
-        Self::new(6152, 1, 1, 0.8, 0.6, 0.95, 0.9, 0.01, 0.1)
+        Self::new(770, 1, 60, 0.8, 0.6, 0.95, 0.95, 0.9, 0.01, 0.1)
     }
 }
 
@@ -68,6 +72,7 @@ struct Individual {
   hue: u8,
   saturation: u8,
   luminance: u8,
+  lifetime: u8,
 }
 
 
@@ -124,6 +129,7 @@ impl Universe {
       sat_recovery_factor: f32,
       sat_decay_factor: f32,
       lum_decay_factor: f32,
+      life_decay_factor: f32,
       sat_ghost_factor: f32,
       hue_drift_strength: f32,
       hue_lerp_factor: f32,
@@ -135,6 +141,7 @@ impl Universe {
           sat_recovery_factor,
           sat_decay_factor,
           lum_decay_factor,
+          life_decay_factor,
           sat_ghost_factor,
           hue_drift_strength,
           hue_lerp_factor,
@@ -166,12 +173,13 @@ impl Universe {
       ]
   }
 
-  pub fn set_grid(&mut self, h: u8, s: u8, l: u8) {
+  pub fn set_grid(&mut self, h: u8, s: u8, l: u8, t: u8) {
     for cell in self.cells.iter_mut() {
       *cell = Individual {
         hue: h,
         saturation: s,
         luminance: l,
+        lifetime: t,
       };
     }
   }
@@ -183,8 +191,9 @@ impl Universe {
       if rng.random_bool(0.5) {
         *cell = Individual {
           hue: rng.random_range(0..=255),
-          saturation: 255,
+          saturation: rng.random_range(100..=255),
           luminance: rng.random_range(100..=255),
+          lifetime: 255,
         };
       } else {
         *cell = Individual::default();
@@ -198,6 +207,7 @@ impl Universe {
         hue: 0,
         saturation: 0,
         luminance: 0,
+        lifetime: 0,
       };
     }
   }
@@ -241,13 +251,12 @@ impl Universe {
                   )
               };
 
-              self.set_cell(uy, ux, new_h, new_s, new_l);
+              self.set_cell(uy, ux, new_h, new_s, new_l, 255);
           }
       }
   }
 
   pub fn draw_brush(&mut self, cx: u32, cy: u32, radius: u32, add_mode: bool, h: u8, s: u8, l: u8) {
-      let mut rng = rand::rng();
       let r2 = (radius * radius) as i32;
 
       for dy in -(radius as i32)..=(radius as i32) {
@@ -277,7 +286,7 @@ impl Universe {
                   (0, 0, 0)
               };
 
-              self.set_cell(y as u32, x as u32, hue, sat, lum);
+              self.set_cell(y as u32, x as u32, hue, sat, lum, 255);
           }
       }
   }
@@ -302,6 +311,7 @@ impl Universe {
           sat_recovery_factor,
           sat_decay_factor,
           lum_decay_factor,
+          life_decay_factor,
           sat_ghost_factor,
           hue_drift_strength,
           hue_lerp_factor,
@@ -324,7 +334,7 @@ impl Universe {
 
               for nidx in self.neighbour_indices(row, col) {
                   let n = self.cells[nidx];
-                  if n.saturation > 0 {
+                  if n.lifetime > 0 {
                       live_neighbors += 1;
                       sat_sum += n.saturation as f32;
                       lum_sum += n.luminance as f32;
@@ -338,7 +348,7 @@ impl Universe {
               let next_alive = ((rule >> bit_index) & 1) == 1;
 
               /* ---------- build the next‐generation pixel ----------------------- */
-              let next_cell = match (cell.saturation > 0, next_alive) {
+              let next_cell = match (cell.lifetime > 0, next_alive) {
                   /* --- survive --------------------------------------------------- */
                   (true, true) => {
                       let new_sat = (cell.saturation as f32
@@ -350,12 +360,19 @@ impl Universe {
                   /* --- death ----------------------------------------------------- */
                   (true, false) => {
                       let new_sat = (cell.saturation as f32
-                          - decay_step as f32 * sat_decay_factor)
+                          - decay_step as f32 * E * sat_decay_factor)
+                          .max(0.0);
+                      let new_lum = (cell.saturation as f32
+                          - decay_step as f32 * E * lum_decay_factor)
+                          .max(0.0);
+                      let new_life = (cell.lifetime as f32
+                          - decay_step as f32 * E * life_decay_factor)
                           .max(0.0);
                       Individual {
                           hue: cell.hue,
                           saturation: new_sat as u8,
-                          luminance: (cell.luminance as f32 * lum_decay_factor) as u8,
+                          luminance: new_lum as u8,
+                          lifetime: new_life as u8,
                       }
                   }
 
@@ -385,7 +402,7 @@ impl Universe {
                       let (mut sin_sum, mut cos_sum) = (0.0f32, 0.0f32);
                       for nidx in self.neighbour_indices(row, col) {
                           let n = self.cells[nidx];
-                          if n.saturation > 0 {
+                          if n.lifetime > 0 {
                               let angle = (n.hue as f32 / 255.0) * TAU;
                               sin_sum += angle.sin();
                               cos_sum += angle.cos();
@@ -404,6 +421,7 @@ impl Universe {
                           hue,
                           saturation: avg(sat_sum),
                           luminance: avg(lum_sum).saturating_add(1),
+                          lifetime: 255,
                       }
                   }
 
@@ -412,6 +430,7 @@ impl Universe {
                       hue: cell.hue,
                       saturation: (cell.saturation as f32 * sat_ghost_factor) as u8,
                       luminance: (cell.luminance as f32 * lum_decay_factor) as u8,
+                      lifetime: (cell.luminance as f32 * life_decay_factor) as u8,
                   },
               };
 
@@ -447,10 +466,10 @@ impl Universe {
     self.draw_buffer = new_draw_buffer;
   }
 
-  pub fn set_cell(&mut self, row: u32, col: u32, hue: u8, sat: u8, lum: u8) {
+  pub fn set_cell(&mut self, row: u32, col: u32, hue: u8, sat: u8, lum: u8, t: u8) {
     if row < self.height && col < self.width {
       let idx = self.index(row, col);
-      self.cells[idx] = Individual { hue, saturation: sat, luminance: lum };
+      self.cells[idx] = Individual { hue, saturation: sat, luminance: lum, lifetime: t};
       self.draw_buffer[idx] = true;
     }
   }

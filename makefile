@@ -1,3 +1,6 @@
+run:
+	cd web-client && npm i && printf "\\e[3J" && npm run dev
+
 package:
 	export RUSTFLAGS='--cfg getrandom_backend="wasm_js"' && wasm-pack build --target web -s ca
 

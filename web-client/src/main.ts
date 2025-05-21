@@ -21,16 +21,35 @@ import init, { Universe } from '@ca/ca';
   const universe = new Universe(uWidth, uHeight);
   universe.randomize();
 
-  // Runtime‑tweakable life‑cycle parameters (default from Rust)
-  let rule = 770;
-  let decayStep    = 1;
-  let recoveryStep = 1;
+  let svgShapes;
+  let backgroundImageData = null;
+  let backgroundMode = 'stretch';
+  let controlIds = [];
+  let controls;
+  let t = 0;
+  let ruleChange = 0;
+  let rotateHue = false;
+  let autoRotate = false;
+  let stampOnRotate = false;
+  let u32max = 4294967295;
+  let shapeColor = '#2F3E4E';
+  let shapeSizeX = 0.1;
+  let shapeSizeY = 0.1;
+  let backgroundColor = '#2F3E4E';
+  let brushColor = '#FF0000';
+  let rule = getRandomIntInclusive(0, u32max);
+  let decayStep  = Math.random() > 0.5 ? 1 : getRandomIntInclusive(0, 500);
+  let recoveryStep = getRandomIntInclusive(0, 500);
   let satRecoveryFactor = 0.8;
   let satDecayFactor = 0.5;
   let lumDecayFactor = 0.95;
+  let lifeDecayFactor = 0.95;
   let satGhostFactor = 0.9;
-  let hueDriftStrength = 0.01;
+  let hueDriftStrength = 0.1;
   let hueLerpFactor = 0.1;
+  let hueAmplitude = 0.1;
+  let saturationAmplitude = 0.1;
+  let ruleChangeRate = 0.1;
   let brushRadius = 40;
   let brushMode = "brush";
   let stampImageData = null;
@@ -42,8 +61,8 @@ import init, { Universe } from '@ca/ca';
   let drawing      = false;
   let drawMode     = 'add'; // 'add' | 'erase'
   let currentColorH = 0;
-  let currentColorS = 0;
-  let currentColorL = 0;
+  let currentColorS = 255;
+  let currentColorL = 127;
 
   // Canvas & WebGL bootstrapping ────────────────────────────────────────────
   const canvas = document.createElement('canvas');
@@ -54,9 +73,12 @@ import init, { Universe } from '@ca/ca';
   window.addEventListener('keydown', (e) => {
     switch (e.key) {
       // colour shortcuts & actions (existing)
+      case 'ArrowUp':  e.preventDefault(); rule += 1; document.getElementById('rule_input').value = rule;   break;
+      case 'ArrowDown':  e.preventDefault(); rule -= 1; document.getElementById('rule_input').value = rule;   break;
       case 'c':  universe.clear();    break;
       case 'b':  setBackgroundImage();    break;
-      case 'r':  universe.randomize(); break;
+      case 'a':  universe.randomize(); break;
+      case 'r':  randomizeParams(); break;
       case 'h':  panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; break;
       case 'p':  paused = !paused; if(!paused){render();} break;
       case 's':  render(); break;
@@ -65,23 +87,94 @@ import init, { Universe } from '@ca/ca';
     }
   });
 
-  let controls = {
-    rule:              { tag: 'input', props: { type: 'number', value: rule, oninput: (e) => { rule = parseInt(e.target.value); } } },
-    colorPicker:       { tag: 'input', props: { type: 'color', oninput: updateColors } },
-    brushSize:         { tag: 'input', props: { type: 'range', min: 1, max: 200, value: brushRadius, oninput: (e) => { brushRadius = parseInt(e.target.value); updateInfo(); } }},
-    randomize:         { tag: 'button', innerHTML: 'Randomize', props: { onclick: () => { universe.randomize(); updateInfo(); }}},
-    pause:             { tag: 'button', innerHTML: 'Pause', props: { onclick: () => { paused = !paused; if (!paused) render(); updateInfo(); }}},
-    clear:             { tag: 'button', innerHTML: 'Clear', props: { onclick: () => { universe.clear(); updateInfo(); }}},
-    setGrid:           { tag: 'button', innerHTML: 'Set', props: { onclick: () => { universe.set_grid(currentColorH, currentColorS, currentColorL); updateInfo(); }}},
-    decaySlider:       { tag: 'input', props: { type: 'range', min: 1, max: 500, value: decayStep, oninput: (e) => { decayStep = parseInt(e.target.value); updateInfo(); }}},
-    recoverySlider:    { tag: 'input', props: { type: 'range', min: 1, max: 500, value: recoveryStep, oninput: (e) => { recoveryStep = parseInt(e.target.value); updateInfo(); }}},
-    satRecoveryFactor: { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: satRecoveryFactor, oninput: (e) => { satRecoveryFactor = parseFloat(e.target.value); updateInfo(); }}},
-    satDecayFactor:    { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: satDecayFactor, oninput: (e) => { satDecayFactor = parseFloat(e.target.value); updateInfo(); }}},
-    lumDecayFactor:    { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: lumDecayFactor, oninput: (e) => { lumDecayFactor = parseFloat(e.target.value); updateInfo(); }}},
-    satGhostFactor:    { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: satGhostFactor, oninput: (e) => { satGhostFactor = parseFloat(e.target.value); updateInfo(); }}},
-    hueDriftStrength:  { tag: 'input', props: { type: 'range', min: 0.0, max: 0.2, step: 0.001, value: hueDriftStrength, oninput: (e) => { hueDriftStrength = parseFloat(e.target.value); updateInfo(); }}},
-    hueLerpFactor:     { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: hueLerpFactor, oninput: (e) => { hueLerpFactor = parseFloat(e.target.value); updateInfo(); }}},
-    imageUpload:       { tag: 'input', props: { type: 'file', accept: 'image/*', onchange: handleImageUpload }},
+
+  function updateShapes() {
+    // this totally doesn't work
+    const width = shapeSizeX * window.innerWidth;
+    const height = shapeSizeY * window.innerHeight;
+
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const size = Math.min(width, height) * 0.1; // scale shapes to fit within canvas
+
+    svgShapes = {
+      circle: `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="${centerX}" cy="${centerY}" r="${size / 2}" fill="${shapeColor}"/>
+      </svg>`,
+
+      square: `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+        <rect x="${centerX - size / 2}" y="${centerY - size / 2}" width="${size}" height="${size}" fill="${shapeColor}"/>
+      </svg>`,
+
+      triangle: `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+        <polygon fill="${shapeColor}" points="
+          ${centerX},${centerY - size / 2}
+          ${centerX + size / 2},${centerY + size / 2}
+          ${centerX - size / 2},${centerY + size / 2}
+        "/>
+      </svg>`,
+
+      star: `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+        <polygon fill="${shapeColor}" points="
+          ${centerX},${centerY - size * 0.5}
+          ${centerX + size * 0.11},${centerY - size * 0.15}
+          ${centerX + size * 0.38},${centerY - size * 0.15}
+          ${centerX + size * 0.16},${centerY + size * 0.07}
+          ${centerX + size * 0.24},${centerY + size * 0.34}
+          ${centerX},${centerY + size * 0.18}
+          ${centerX - size * 0.24},${centerY + size * 0.34}
+          ${centerX - size * 0.16},${centerY + size * 0.07}
+          ${centerX - size * 0.38},${centerY - size * 0.15}
+          ${centerX - size * 0.11},${centerY - size * 0.15}
+        "/>
+      </svg>`,
+
+      hexagon: `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+        <polygon fill="${shapeColor}" points="
+          ${centerX},${centerY - size * 0.5}
+          ${centerX + size * 0.433},${centerY - size * 0.25}
+          ${centerX + size * 0.433},${centerY + size * 0.25}
+          ${centerX},${centerY + size * 0.5}
+          ${centerX - size * 0.433},${centerY + size * 0.25}
+          ${centerX - size * 0.433},${centerY - size * 0.25}
+        "/>
+      </svg>`
+    };
+  }
+  updateShapes();
+
+
+  // handleBuiltInImageChange(svgShapes.circle);
+
+  let controlSet = {
+    rule:                { tag: 'input', props: { id: 'rule_input', type: 'number', value: rule, oninput: (e) => { rule = parseInt(e.target.value); } } },
+    randomize:           { tag: 'button', innerHTML: 'Randomize', props: { onclick: randomizeParams }},
+    shapeColor:          { tag: 'input', props: { type: 'color', oninput: (e) => { shapeColor = e.target.value; updateShapes(); }, value: backgroundColor } },
+    shapeSizeX:          { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: shapeSizeX, oninput: (e) => { shapeSizeX = parseFloat(e.target.value); updateShapes(); }}},
+    shapeSizeY:          { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: shapeSizeY, oninput: (e) => { shapeSizeY = parseFloat(e.target.value); updateShapes(); }}},
+    brushColor:          { tag: 'input', props: { type: 'color', oninput: updateColors, value: brushColor } },
+    backgroundColor:     { tag: 'input', props: { type: 'color', oninput: (e) => { backgroundColor = e.target.value; document.body.style.backgroundColor = backgroundColor; }, value: backgroundColor } },
+    brushSize:           { tag: 'input', props: { type: 'range', min: 1, max: 200, value: brushRadius, oninput: (e) => { brushRadius = parseInt(e.target.value); updateInfo(); } }},
+    pause:               { tag: 'input', props: { type: 'checkbox', onclick: (e) => { paused = e.target.checked; if (!paused) { render(); } }}},
+    clear:               { tag: 'button', innerHTML: 'Clear', props: { onclick: () => { universe.clear(); updateInfo(); }}},
+    setColor:            { tag: 'button', innerHTML: 'Set', props: { onclick: () => { universe.set_grid(currentColorH, currentColorS, currentColorL); updateInfo(); }}},
+    decaySlider:         { tag: 'input', props: { type: 'range', min: 1, max: 500, value: decayStep, oninput: (e) => { decayStep = parseInt(e.target.value); updateInfo(); }}},
+    recoverySlider:      { tag: 'input', props: { type: 'range', min: 1, max: 500, value: recoveryStep, oninput: (e) => { recoveryStep = parseInt(e.target.value); updateInfo(); }}},
+    
+    satRecoveryFactor:   { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: satRecoveryFactor, oninput: (e) => { satRecoveryFactor = parseFloat(e.target.value); updateInfo(); }}},
+    satDecayFactor:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: satDecayFactor, oninput: (e) => { satDecayFactor = parseFloat(e.target.value); updateInfo(); }}},
+    lumDecayFactor:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: lumDecayFactor, oninput: (e) => { lumDecayFactor = parseFloat(e.target.value); updateInfo(); }}},
+    lifeDecayFactor:     { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: lifeDecayFactor, oninput: (e) => { lifeDecayFactor = parseFloat(e.target.value); updateInfo(); }}},
+    satGhostFactor:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: satGhostFactor, oninput: (e) => { satGhostFactor = parseFloat(e.target.value); updateInfo(); }}},
+    bgHueAmplitude:      { tag: 'input', props: { type: 'range', min: 0.0, max: 2.0, step: 0.01, value: hueAmplitude, oninput: (e) => { hueAmplitude = parseFloat(e.target.value); updateInfo(); }}},
+    bgSatAmplitude:      { tag: 'input', props: { type: 'range', min: 0.0, max: 2.0, step: 0.01, value: saturationAmplitude, oninput: (e) => { saturationAmplitude = parseFloat(e.target.value); updateInfo(); }}},
+    hueDriftStrength:    { tag: 'input', props: { type: 'range', min: 0.0, max: 0.2, step: 0.001, value: hueDriftStrength, oninput: (e) => { hueDriftStrength = parseFloat(e.target.value); updateInfo(); }}},
+    hueLerpFactor:       { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: hueLerpFactor, oninput: (e) => { hueLerpFactor = parseFloat(e.target.value); updateInfo(); }}},
+    ruleChangeRate:      { tag: 'input', props: { type: 'range', min: 0.0, max: 1.0, step: 0.01, value: ruleChangeRate, oninput: (e) => { ruleChangeRate = parseFloat(e.target.value); updateInfo(); }}},
+    autoRotate:          { tag: 'input', props: { type: 'checkbox', onclick: (e) => { autoRotate = e.target.checked; if (!autoRotate) { render(); } }}},
+    rotateHue:          { tag: 'input', props: { type: 'checkbox', onclick: (e) => { rotateHue = e.target.checked; if (!rotateHue) { render(); } }}},
+    stampOnRotate:       { tag: 'input', props: { type: 'checkbox', onclick: (e) => { stampOnRotate = e.target.checked; if (!stampOnRotate) { render(); } }}},
+    brushImageUpload:    { tag: 'input', props: { type: 'file', accept: 'image/*', onchange: handleImageUpload }},
     brushMode: {
       tag: 'select',
       props: {
@@ -92,7 +185,20 @@ import init, { Universe } from '@ca/ca';
         { tag: 'option', props: { value: 'stamp' }, innerHTML: 'Stamp' },
       ]
     },
-    backgroundImageUpload: {
+    builtInImages: {
+      tag: 'select',
+      props: {
+        onchange: handleBuiltInImageChange
+      },
+      children: [
+        { tag: 'option', props: { value: null }, innerHTML: 'None' },
+        { tag: 'option', props: { value: svgShapes.circle }, innerHTML: 'Circle Shape' },
+        { tag: 'option', props: { value: svgShapes.square }, innerHTML: 'Square Shape' },
+        { tag: 'option', props: { value: svgShapes.triangle }, innerHTML: 'Triangle Shape' },
+        { tag: 'option', props: { value: svgShapes.hexagon }, innerHTML: 'Hexagon Shape' }
+      ]
+    },
+    imageUpload: {
       tag: 'input',
       props: {
         type: 'file',
@@ -119,17 +225,128 @@ import init, { Universe } from '@ca/ca';
       props: {
         onclick: setBackgroundImage
       },
-      innerHTML: 'Set Background'
+      innerHTML: 'Set Image'
     }
   };
-  controls = createControls(controls);
+
+  function handleBuiltInImageChange(e) {
+    const url = e.target ? e.target.value : e;
+    if (!url) { return; }
+    const img = new Image();
+    img.onload = () => {
+      backgroundImageData = img;
+      setBackgroundImage();
+    };
+    img.src = "data:image/svg+xml;utf8," + encodeURIComponent(url);
+  }
+
+  function getRandomColor() {
+    const r = Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
+    const g = Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
+    const b = Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
+    return `#${r}${g}${b}`;
+  }
+  function randomizeParams() {
+
+    universe.clear();
+
+    if (stampOnRotate) {
+      var svgKeys = Object.keys(svgShapes);
+      var svgKey = svgKeys[getRandomIntInclusive(0, svgKeys.length - 1)];
+      handleBuiltInImageChange(svgShapes[svgKey]);
+    }
+
+    backgroundColor = getRandomColor();
+    document.getElementById('backgroundColor').value = backgroundColor;
+    document.body.style.backgroundColor = backgroundColor;
+
+    brushColor = '#FF0000';
+
+    rule = getRandomIntInclusive(
+      parseInt(controlSet.rule.props.min ?? 0),
+      parseInt(controlSet.rule.props.max ?? u32max)
+    );
+    document.getElementById('rule_input').value = rule;
+
+
+    decayStep  = Math.random() > 0.5 ? 1 : getRandomIntInclusive(0, 500);
+    document.getElementById('decaySlider').value = decayStep;
+
+    recoveryStep = getRandomIntInclusive(
+      parseInt(controlSet.recoverySlider.props.min),
+      parseInt(controlSet.recoverySlider.props.max)
+    );
+    document.getElementById('recoverySlider').value = recoveryStep;
+
+    satRecoveryFactor = parseFloat(
+      (Math.random() * (controlSet.satRecoveryFactor.props.max - controlSet.satRecoveryFactor.props.min) + parseFloat(controlSet.satRecoveryFactor.props.min)).toFixed(2)
+    );
+    document.getElementById('satRecoveryFactor').value = satRecoveryFactor;
+
+    satDecayFactor = parseFloat(
+      (Math.random() * (controlSet.satDecayFactor.props.max - controlSet.satDecayFactor.props.min) + parseFloat(controlSet.satDecayFactor.props.min)).toFixed(2)
+    );
+    document.getElementById('satDecayFactor').value = satDecayFactor;
+
+    lumDecayFactor = parseFloat(
+      (Math.random() * (controlSet.lumDecayFactor.props.max - controlSet.lumDecayFactor.props.min) + parseFloat(controlSet.lumDecayFactor.props.min)).toFixed(2)
+    );
+    document.getElementById('lumDecayFactor').value = lumDecayFactor;
+
+    lifeDecayFactor = parseFloat(
+      (Math.random() * (controlSet.lifeDecayFactor.props.max - controlSet.lifeDecayFactor.props.min) + parseFloat(controlSet.lifeDecayFactor.props.min)).toFixed(2)
+    );
+    document.getElementById('lifeDecayFactor').value = lifeDecayFactor;
+
+    satGhostFactor = parseFloat(
+      (Math.random() * (controlSet.satGhostFactor.props.max - controlSet.satGhostFactor.props.min) + parseFloat(controlSet.satGhostFactor.props.min)).toFixed(2)
+    );
+    document.getElementById('satGhostFactor').value = satGhostFactor;
+
+    hueDriftStrength = parseFloat(
+      (Math.random() * (controlSet.hueDriftStrength.props.max - controlSet.hueDriftStrength.props.min) + parseFloat(controlSet.hueDriftStrength.props.min)).toFixed(3)
+    );
+    document.getElementById('hueDriftStrength').value = hueDriftStrength;
+
+    hueLerpFactor = parseFloat(
+      (Math.random() * (controlSet.hueLerpFactor.props.max - controlSet.hueLerpFactor.props.min) + parseFloat(controlSet.hueLerpFactor.props.min)).toFixed(2)
+    );
+    document.getElementById('hueLerpFactor').value = hueLerpFactor;
+
+    hueAmplitude = parseFloat(
+      (Math.random() * (controlSet.bgHueAmplitude.props.max - controlSet.bgHueAmplitude.props.min) + parseFloat(controlSet.bgHueAmplitude.props.min)).toFixed(2)
+    );
+    document.getElementById('bgHueAmplitude').value = hueAmplitude;
+
+    saturationAmplitude = parseFloat(
+      (Math.random() * (controlSet.bgSatAmplitude.props.max - controlSet.bgSatAmplitude.props.min) + parseFloat(controlSet.bgSatAmplitude.props.min)).toFixed(2)
+    );
+    document.getElementById('bgSatAmplitude').value = saturationAmplitude;
+
+    ruleChangeRate = parseFloat(
+      (Math.random() * (controlSet.ruleChangeRate.props.max - controlSet.ruleChangeRate.props.min) + parseFloat(controlSet.ruleChangeRate.props.min)).toFixed(2)
+    );
+    document.getElementById('ruleChangeRate').value = ruleChangeRate;
+
+
+    universe.clear();
+    if (backgroundImageData) {
+      setBackgroundImage();
+    } else {
+      universe.randomize();
+    }
+
+    updateInfo();
+  }
+
+  controlIds = Object.keys(controlSet);
+  controls = createControls(controlSet);
   Object.values(controls).forEach((control) => {panel.appendChild(control);})
   panel.appendChild(info);
   panel.appendChild(indv);
 
 
-  let backgroundImageData = null;
-  let backgroundMode = 'stretch';
+
 
   function handleBackgroundImageUpload(event) {
     const file = event.target.files[0];
@@ -139,13 +356,13 @@ import init, { Universe } from '@ca/ca';
     reader.onload = () => {
       const img = new Image();
       img.onload = () => {
-        // You might convert this to a canvas or store it for WASM background drawing
         backgroundImageData = img;
       };
       img.src = reader.result;
     };
     reader.readAsDataURL(file);
   }
+
 
   function handleBackgroundModeChange(event) {
     backgroundMode = event.target.value;
@@ -249,7 +466,7 @@ import init, { Universe } from '@ca/ca';
       Rule: ${rule}<br>
       Decay Step: ${decayStep}, Recovery Step: ${recoveryStep}<br>
       Sat Recovery: ${satRecoveryFactor.toFixed(2)}, Sat Decay: ${satDecayFactor.toFixed(2)}<br>
-      Lum Decay: ${lumDecayFactor.toFixed(2)}, Sat Ghost: ${satGhostFactor.toFixed(2)}<br>
+      Lum Decay: ${lumDecayFactor.toFixed(2)}, Life Decay: ${lifeDecayFactor.toFixed(2)}, Sat Ghost: ${satGhostFactor.toFixed(2)}<br>
       Hue Drift: ${hueDriftStrength.toFixed(3)}, Hue Lerp: ${hueLerpFactor.toFixed(2)}
     `;
   }
@@ -287,6 +504,7 @@ import init, { Universe } from '@ca/ca';
 
       const el = document.createElement(config.tag);
 
+      el.id = key;
       if (config.innerHTML) {
         el.innerHTML = config.innerHTML;
       }
@@ -322,6 +540,94 @@ import init, { Universe } from '@ca/ca';
 
     return elements;
   }
+
+  function rotateHueSaturation(hexColor, time, hueAmplitude = 30, saturationAmplitude = 20) {
+    // Convert hex to RGB
+    function hexToRgb(hex) {
+      hex = hex.replace(/^#/, '');
+      if (hex.length === 3) {
+        hex = hex.split('').map(x => x + x).join('');
+      }
+      const bigint = parseInt(hex, 16);
+      return {
+        r: (bigint >> 16) & 255,
+        g: (bigint >> 8) & 255,
+        b: bigint & 255
+      };
+    }
+
+    // Convert RGB to HSL
+    function rgbToHsl(r, g, b) {
+      r /= 255; g /= 255; b /= 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      let h, s, l = (max + min) / 2;
+
+      if (max === min) {
+        h = s = 0;
+      } else {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+          case g: h = (b - r) / d + 2; break;
+          case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+      }
+
+      return { h: h * 360, s: s * 100, l: l * 100 };
+    }
+
+    // Convert HSL to RGB
+    function hslToRgb(h, s, l) {
+      h /= 360; s /= 100; l /= 100;
+      const hue2rgb = (p, q, t) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1 / 6) return p + (q - p) * 6 * t;
+        if (t < 1 / 2) return q;
+        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+        return p;
+      };
+      let r, g, b;
+
+      if (s === 0) {
+        r = g = b = l;
+      } else {
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        r = hue2rgb(p, q, h + 1 / 3);
+        g = hue2rgb(p, q, h);
+        b = hue2rgb(p, q, h - 1 / 3);
+      }
+
+      return {
+        r: Math.round(r * 255),
+        g: Math.round(g * 255),
+        b: Math.round(b * 255)
+      };
+    }
+
+    // Convert RGB to hex
+    function rgbToHex(r, g, b) {
+      return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+    }
+
+    const { r, g, b } = hexToRgb(hexColor);
+    let { h, s, l } = rgbToHsl(r, g, b);
+
+    // Apply sine wave modulation
+    const sine = Math.sin(time);
+    h = (h + hueAmplitude * sine) % 360;
+    if (h < 0) h += 360;
+
+    s = s + saturationAmplitude * sine;
+    s = Math.max(0, Math.min(100, s));
+
+    const { r: r2, g: g2, b: b2 } = hslToRgb(h, s, l);
+    return rgbToHex(r2, g2, b2);
+  }
+
 
   document.querySelector('#app')!.appendChild(canvas);
   document.querySelector('#app')!.appendChild(panel);
@@ -537,7 +843,7 @@ vec3 hsl2rgb(vec3 hsl) {
     return rgb;
 }
 void main() {
-  vec3 hsl = texture2D(u_texture, vec2(v_texcoord.x, 1.0 - v_texcoord.y)).rgb;
+  vec4 hsl = texture2D(u_texture, vec2(v_texcoord.x, 1.0 - v_texcoord.y)).rgba;
 
   float hue = hsl.r;
   float sat = hsl.g;
@@ -545,7 +851,7 @@ void main() {
 
   vec3 rgb = hsl2rgb(vec3(hue, sat, lum)); 
 
-  gl_FragColor = vec4(rgb, 1.0);
+  gl_FragColor = vec4(rgb, hsl.a);
 }`;
 
   function compileShader(type, source) {
@@ -586,7 +892,32 @@ void main() {
 
   // ── Main render loop ─────────────────────────────────────────────────────
   function render() {
+    t += 0.01;
     if (drawing) drawAtMouse();
+
+    ruleChange += ruleChangeRate;
+
+    if (rotateHue) {
+      backgroundColor = rotateHueSaturation(backgroundColor, t, hueAmplitude, saturationAmplitude);
+      document.body.style.backgroundColor = backgroundColor;
+    }
+
+    if (autoRotate) {
+      if (ruleChange > 100) {
+        rule = getRandomIntInclusive(0, u32max);
+        document.getElementById('rule_input').value = rule;
+        ruleChange = 0;
+      }
+
+      if (stampOnRotate) {
+        universe.clear();
+        if (backgroundImageData) {
+          setBackgroundImage();
+        } else {
+          universe.randomize();
+        }
+      }
+    }
 
     // Propagate user‑defined parameters into WASM before each tick
     universe.set_params(
@@ -596,6 +927,7 @@ void main() {
       satRecoveryFactor,
       satDecayFactor,
       lumDecayFactor,
+      lifeDecayFactor,
       satGhostFactor,
       hueDriftStrength,
       hueLerpFactor,
@@ -609,7 +941,7 @@ void main() {
     const cells = new Uint8Array(memory.buffer, ptr, len);
 
     // Upload texture & draw
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, universe.width(), universe.height(), 0, gl.RGB, gl.UNSIGNED_BYTE, cells);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, universe.width(), universe.height(), 0, gl.RGBA, gl.UNSIGNED_BYTE, cells);
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
     updateIndv(cells);
