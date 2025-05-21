@@ -629,8 +629,8 @@ import init, { Universe } from '@ca/ca';
   }
 
 
-  document.querySelector('#app')!.appendChild(canvas);
-  document.querySelector('#app')!.appendChild(panel);
+  document.querySelector('#app').appendChild(canvas);
+  document.querySelector('#app').appendChild(panel);
 
   panel.addEventListener('mousedown', (e) => {
     if (e.target !== panel) return; // Only drag from panel background
