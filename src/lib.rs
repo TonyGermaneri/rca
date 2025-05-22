@@ -21,6 +21,42 @@ pub struct LifeParams {
     pub hue_lerp_factor: f32,
 }
 
+#[wasm_bindgen]
+#[derive(Debug, Clone)]
+pub struct UniverseStats {
+    avg_hue: f32,
+    median_hue: f32,
+    avg_saturation: f32,
+    median_saturation: f32,
+    avg_luminance: f32,
+    median_luminance: f32,
+    avg_lifetime: f32,
+    median_lifetime: f32,
+    alive_count: usize,
+    dead_count: usize,
+    population_ratio: f32,
+}
+
+#[wasm_bindgen]
+impl UniverseStats {
+    #[wasm_bindgen(getter)] pub fn avg_hue(&self) -> f32 { self.avg_hue }
+    #[wasm_bindgen(getter)] pub fn median_hue(&self) -> f32 { self.median_hue }
+
+    #[wasm_bindgen(getter)] pub fn avg_saturation(&self) -> f32 { self.avg_saturation }
+    #[wasm_bindgen(getter)] pub fn median_saturation(&self) -> f32 { self.median_saturation }
+
+    #[wasm_bindgen(getter)] pub fn avg_luminance(&self) -> f32 { self.avg_luminance }
+    #[wasm_bindgen(getter)] pub fn median_luminance(&self) -> f32 { self.median_luminance }
+
+    #[wasm_bindgen(getter)] pub fn avg_lifetime(&self) -> f32 { self.avg_lifetime }
+    #[wasm_bindgen(getter)] pub fn median_lifetime(&self) -> f32 { self.median_lifetime }
+
+    #[wasm_bindgen(getter)] pub fn alive_count(&self) -> usize { self.alive_count }
+    #[wasm_bindgen(getter)] pub fn dead_count(&self) -> usize { self.dead_count }
+
+    #[wasm_bindgen(getter)] pub fn population_ratio(&self) -> f32 { self.population_ratio }
+}
+
 /// The simulation universe.  The `params` field makes the life‑cycle tunable at runtime.
 #[wasm_bindgen]
 pub struct Universe {
@@ -30,6 +66,7 @@ pub struct Universe {
     next: Vec<Individual>,
     draw_buffer: Vec<bool>,
     params: LifeParams,
+    stats: UniverseStats,
 }
 
 impl LifeParams {
@@ -112,6 +149,19 @@ impl Universe {
           next: vec![Individual::default(); size],
           draw_buffer: vec![false; size],
           params: LifeParams::default(),
+          stats: UniverseStats {
+              avg_hue: 0.0,
+              median_hue: 0.0,
+              avg_saturation: 0.0,
+              median_saturation: 0.0,
+              avg_luminance: 0.0,
+              median_luminance: 0.0,
+              avg_lifetime: 0.0,
+              median_lifetime: 0.0,
+              alive_count: 0,
+              dead_count: 0,
+              population_ratio: 0.0,
+          },
       }
   }
 
@@ -119,6 +169,11 @@ impl Universe {
   /// Create a universe with custom parameters.
   pub fn with_params(width: u32, height: u32, params: LifeParams) -> Self {
       Self { params, ..Self::new(width, height) }
+  }
+
+  #[wasm_bindgen(getter)]
+  pub fn stats(&self) -> UniverseStats {
+      self.stats.clone()
   }
 
   pub fn set_params(
@@ -317,6 +372,17 @@ impl Universe {
           hue_lerp_factor,
       } = self.params;
 
+      let mut sum_hue = 0u32;
+      let mut sum_sat = 0u32;
+      let mut sum_lum = 0u32;
+      let mut sum_life = 0u32;
+
+      let mut alive_count = 0usize;
+      let mut histogram_sat = [0usize; 256];
+      let mut histogram_lum = [0usize; 256];
+      let mut histogram_hue = [0usize; 256];
+      let mut histogram_life = [0usize; 256];
+
       for row in 0..self.height {
           for col in 0..self.width {
               let idx = self.index(row, col);
@@ -435,8 +501,38 @@ impl Universe {
               };
 
               self.next[idx] = next_cell;
+
+              // Accumulate stats
+              sum_hue += next_cell.hue as u32;
+              sum_sat += next_cell.saturation as u32;
+              sum_lum += next_cell.luminance as u32;
+              sum_life += next_cell.lifetime as u32;
+
+              histogram_hue[next_cell.hue as usize] += 1;
+              histogram_sat[next_cell.saturation as usize] += 1;
+              histogram_lum[next_cell.luminance as usize] += 1;
+              histogram_life[next_cell.lifetime as usize] += 1;
+
+              if next_cell.lifetime > 0 {
+                  alive_count += 1;
+              }
+
           }
       }
+
+      let total = (self.width * self.height) as usize;
+
+      self.stats.avg_hue = sum_hue as f32 / total as f32;
+      self.stats.avg_saturation = sum_sat as f32 / total as f32;
+      self.stats.avg_luminance = sum_lum as f32 / total as f32;
+      self.stats.avg_lifetime = sum_life as f32 / total as f32;
+      self.stats.median_hue = median_from_histogram(&histogram_hue, total);
+      self.stats.median_saturation = median_from_histogram(&histogram_sat, total);
+      self.stats.median_luminance = median_from_histogram(&histogram_lum, total);
+      self.stats.median_lifetime = median_from_histogram(&histogram_life, total);
+      self.stats.alive_count;
+      self.stats.dead_count = total - alive_count;
+      self.stats.population_ratio = alive_count as f32 / total as f32;
 
       std::mem::swap(&mut self.cells, &mut self.next);
   }
@@ -494,6 +590,16 @@ impl Universe {
   }
 }
 
+fn median_from_histogram(hist: &[usize; 256], total: usize) -> f32 {
+    let mut count = 0;
+    for (val, &freq) in hist.iter().enumerate() {
+        count += freq;
+        if count >= total / 2 {
+            return val as f32;
+        }
+    }
+    0.0
+}
 
 #[cfg(feature = "console_error_panic_hook")]
 #[wasm_bindgen(start)]
