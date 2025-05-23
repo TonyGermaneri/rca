@@ -3,7 +3,7 @@ html, body {
     padding: 0;
     font-family: sans-serif;
     color: #fff;
-    background-color: #2F3E4E;
+    background-color: #000;
 }
 .panel {
   position: absolute;
@@ -16,6 +16,9 @@ html, body {
   border-radius: 8px;
   cursor: move;
   user-select: none;
+  max-height: 90vh;
+  overflow: scroll;
+  min-width: 590px;
 }
 
 .hint {
@@ -23,6 +26,39 @@ html, body {
   position: fixed;
   right: 10px;
   bottom: 10px;
+}
+
+.info {
+  background: #000;
+  opacity: 1.0;
+}
+
+.icon-container {
+  position: relative;
+  display: inline-block;
+  font-size: 42px;
+  float: right;
+  margin-right: 10px;
+}
+
+.tooltip {
+  display: none;
+  position: absolute;
+  top: 50%; /* or adjust */
+  right: 10px;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  z-index: 10;
+  font-size: 17px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+}
+
+.icon-container:hover .tooltip {
+  display: block;
 }
 
 /* Keyframes: delay 3s, fade over 0.5s */
@@ -38,4 +74,12 @@ html, body {
     opacity: 0;
     display: none;
   }
+}
+
+
+
+input,
+select,
+button {
+  max-width: 100%;
 }

@@ -1,11 +1,22 @@
 use wasm_bindgen::prelude::*;
 use rand::Rng;
 
-pub const E: f32 = 2.71828182845904523536028747135266250_f32; // 2.7182818284590451f64
+use std::f32::consts::E;
+// pub const E: f32 = 2.71828182845904523536028747135266250_f32; // 2.7182818284590451f64
 
 /// Parameters controlling how cells gain or lose brightness.
 /// They can be tweaked while the simulation is running to explore different
 /// ecological dynamics without recompiling.
+
+#[wasm_bindgen]
+#[derive(Copy, Clone, Debug)]
+pub enum LifeChannel {
+    Hue,
+    Saturation,
+    Luminance,
+    Alpha,
+}
+
 #[wasm_bindgen]
 #[derive(Clone, Copy, Debug)]
 pub struct LifeParams {
@@ -19,6 +30,7 @@ pub struct LifeParams {
     pub sat_ghost_factor: f32,
     pub hue_drift_strength: f32,
     pub hue_lerp_factor: f32,
+    pub life_channel: LifeChannel,
 }
 
 #[wasm_bindgen]
@@ -30,8 +42,8 @@ pub struct UniverseStats {
     median_saturation: f32,
     avg_luminance: f32,
     median_luminance: f32,
-    avg_lifetime: f32,
-    median_lifetime: f32,
+    avg_alpha: f32,
+    median_alpha: f32,
     alive_count: usize,
     dead_count: usize,
     population_ratio: f32,
@@ -48,8 +60,8 @@ impl UniverseStats {
     #[wasm_bindgen(getter)] pub fn avg_luminance(&self) -> f32 { self.avg_luminance }
     #[wasm_bindgen(getter)] pub fn median_luminance(&self) -> f32 { self.median_luminance }
 
-    #[wasm_bindgen(getter)] pub fn avg_lifetime(&self) -> f32 { self.avg_lifetime }
-    #[wasm_bindgen(getter)] pub fn median_lifetime(&self) -> f32 { self.median_lifetime }
+    #[wasm_bindgen(getter)] pub fn avg_alpha(&self) -> f32 { self.avg_alpha }
+    #[wasm_bindgen(getter)] pub fn median_alpha(&self) -> f32 { self.median_alpha }
 
     #[wasm_bindgen(getter)] pub fn alive_count(&self) -> usize { self.alive_count }
     #[wasm_bindgen(getter)] pub fn dead_count(&self) -> usize { self.dead_count }
@@ -67,6 +79,7 @@ pub struct Universe {
     draw_buffer: Vec<bool>,
     params: LifeParams,
     stats: UniverseStats,
+    brush_state: BrushState,
 }
 
 impl LifeParams {
@@ -81,6 +94,7 @@ impl LifeParams {
         sat_ghost_factor: f32,
         hue_drift_strength: f32,
         hue_lerp_factor: f32,
+        life_channel: LifeChannel,
     ) -> Self {
         Self {
             rule,
@@ -93,13 +107,14 @@ impl LifeParams {
             sat_ghost_factor,
             hue_drift_strength,
             hue_lerp_factor,
+            life_channel,
         }
     }
 }
 
 impl Default for LifeParams {
     fn default() -> Self {
-        Self::new(770, 1, 60, 0.8, 0.6, 0.95, 0.95, 0.9, 0.01, 0.1)
+        Self::new(770, 1, 60, 0.8, 0.6, 0.95, 0.95, 0.9, 0.01, 0.1, LifeChannel::Alpha)
     }
 }
 
@@ -109,9 +124,19 @@ struct Individual {
   hue: u8,
   saturation: u8,
   luminance: u8,
-  lifetime: u8,
+  alpha: u8,
 }
 
+impl Individual {
+    fn activity_value(&self, channel: LifeChannel) -> u8 {
+        match channel {
+            LifeChannel::Hue => self.hue,
+            LifeChannel::Saturation => self.saturation,
+            LifeChannel::Luminance => self.luminance,
+            LifeChannel::Alpha => self.alpha,
+        }
+    }
+}
 
 fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     let max = r.max(g.max(b));
@@ -136,6 +161,11 @@ fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     (h, s, l)
 }
 
+#[derive(Default)]
+struct BrushState {
+    last_id: Option<u64>,
+    points: Vec<(u32, u32)>,
+}
 
 #[wasm_bindgen]
 impl Universe {
@@ -156,12 +186,13 @@ impl Universe {
               median_saturation: 0.0,
               avg_luminance: 0.0,
               median_luminance: 0.0,
-              avg_lifetime: 0.0,
-              median_lifetime: 0.0,
+              avg_alpha: 0.0,
+              median_alpha: 0.0,
               alive_count: 0,
               dead_count: 0,
               population_ratio: 0.0,
           },
+          brush_state: BrushState::default(),
       }
   }
 
@@ -188,6 +219,7 @@ impl Universe {
       sat_ghost_factor: f32,
       hue_drift_strength: f32,
       hue_lerp_factor: f32,
+      life_channel: LifeChannel,
   ) {
       self.params = LifeParams::new(
           rule,
@@ -200,6 +232,7 @@ impl Universe {
           sat_ghost_factor,
           hue_drift_strength,
           hue_lerp_factor,
+          life_channel,
       );
   }
 
@@ -234,7 +267,7 @@ impl Universe {
         hue: h,
         saturation: s,
         luminance: l,
-        lifetime: t,
+        alpha: t,
       };
     }
   }
@@ -248,7 +281,7 @@ impl Universe {
           hue: rng.random_range(0..=255),
           saturation: rng.random_range(100..=255),
           luminance: rng.random_range(100..=255),
-          lifetime: 255,
+          alpha: 255,
         };
       } else {
         *cell = Individual::default();
@@ -262,7 +295,7 @@ impl Universe {
         hue: 0,
         saturation: 0,
         luminance: 0,
-        lifetime: 0,
+        alpha: 0,
       };
     }
   }
@@ -311,42 +344,100 @@ impl Universe {
       }
   }
 
-  pub fn draw_brush(&mut self, cx: u32, cy: u32, radius: u32, add_mode: bool, h: u8, s: u8, l: u8) {
-      let r2 = (radius * radius) as i32;
+  #[wasm_bindgen]
+  pub fn draw_brush(
+      &mut self,
+      cx: u32,
+      cy: u32,
+      radius: u32,
+      add_mode: bool,
+      h: u8,
+      s: u8,
+      l: u8,
+      brush_id: u64,
+  ) {
+      const MAX_POINTS: usize = 6;
 
-      for dy in -(radius as i32)..=(radius as i32) {
-          let y = cy as i32 + dy;
-          if y < 0 || y >= self.height as i32 {
-              continue;
+      // Function to draw a brush dab at a point
+      let draw_circle = |universe: &mut Universe, x: u32, y: u32| {
+          let r2 = (radius * radius) as i32;
+          for dy in -(radius as i32)..=(radius as i32) {
+              let y = y as i32 + dy;
+              if y < 0 || y >= universe.height as i32 {
+                  continue;
+              }
+              let dy2 = dy * dy;
+              for dx in -(radius as i32)..=(radius as i32) {
+                  let dx2 = dx * dx;
+                  if dx2 + dy2 > r2 {
+                      continue;
+                  }
+                  let x = x as i32 + dx;
+                  if x < 0 || x >= universe.width as i32 {
+                      continue;
+                  }
+                  let (hue, sat, lum) = if add_mode { (h, s, l) } else { (0, 0, 0) };
+                  universe.set_cell(y as u32, x as u32, hue, sat, lum, 255);
+              }
           }
-          let dy2 = dy * dy;
+      };
 
-          for dx in -(radius as i32)..=(radius as i32) {
-              let dx2 = dx * dx;
-              if dx2 + dy2 > r2 {
-                  continue;
-              }
-              let x = cx as i32 + dx;
-              if x < 0 || x >= self.width as i32 {
-                  continue;
-              }
+      // Function to interpolate and draw a segment using Catmull-Rom
+      let draw_catmull_rom = |universe: &mut Universe, p0: (u32, u32), p1: (u32, u32), p2: (u32, u32), p3: (u32, u32)| {
+          let steps = 256;
+          for i in 0..=steps {
+              let t = i as f32 / steps as f32;
+              let t2 = t * t;
+              let t3 = t2 * t;
 
-              let (hue, sat, lum) = if add_mode {
-                  (
-                      h,
-                      s,
-                      l,
-                  )
-              } else {
-                  (0, 0, 0)
+              let blend = |a: u32, b: u32, c: u32, d: u32| -> u32 {
+                  let a = a as f32;
+                  let b = b as f32;
+                  let c = c as f32;
+                  let d = d as f32;
+                  let result = 0.5 * (
+                      (2.0 * b) +
+                      (-a + c) * t +
+                      (2.0 * a - 5.0 * b + 4.0 * c - d) * t2 +
+                      (-a + 3.0 * b - 3.0 * c + d) * t3
+                  );
+                  result.round().max(0.0) as u32
               };
 
-              self.set_cell(y as u32, x as u32, hue, sat, lum, 255);
+              let x = blend(p0.0, p1.0, p2.0, p3.0);
+              let y = blend(p0.1, p1.1, p2.1, p3.1);
+              draw_circle(universe, x, y);
           }
+      };
+
+      // Manage the brush stroke state
+      if self.brush_state.last_id == Some(brush_id) {
+          self.brush_state.points.push((cx, cy));
+          if self.brush_state.points.len() > MAX_POINTS {
+              self.brush_state.points.remove(0);
+          }
+      } else {
+          self.brush_state.points.clear();
+          self.brush_state.points.push((cx, cy));
+          self.brush_state.last_id = Some(brush_id);
+      }
+
+      // Draw with spline if we have enough points
+      if self.brush_state.points.len() >= 4 {
+          let points = self.brush_state.points.clone(); // Take a copy to satisfy borrow checker
+          for i in 0..(points.len() - 3) {
+              draw_catmull_rom(
+                  self,
+                  points[i],
+                  points[i + 1],
+                  points[i + 2],
+                  points[i + 3],
+              );
+          }
+      } else {
+          draw_circle(self, cx, cy); // Fallback for initial points
       }
   }
-
-
   /// Advance the automaton by one generation.
   ///
   /// `params.rule` is an 18-bit birth/survival mask laid out as
@@ -357,6 +448,11 @@ impl Universe {
   /// so classic Conway “B3/S23” is
   /// `0b0000001_00000100_00001000u32  // 0x0408`
   pub fn tick(&mut self) {
+
+      if self.width == 0 || self.height == 0 {
+          return;
+      }
+
       use std::f32::consts::TAU;
 
       let LifeParams {
@@ -370,6 +466,7 @@ impl Universe {
           sat_ghost_factor,
           hue_drift_strength,
           hue_lerp_factor,
+          life_channel,
       } = self.params;
 
       let mut sum_hue = 0u32;
@@ -394,13 +491,14 @@ impl Universe {
               }
 
               /* ---------- count live neighbours & accumulate colour data -------- */
+
               let mut live_neighbors = 0u8;
               let mut sat_sum = 0.0f32;
               let mut lum_sum = 0.0f32;
 
               for nidx in self.neighbour_indices(row, col) {
                   let n = self.cells[nidx];
-                  if n.lifetime > 0 {
+                  if n.activity_value(life_channel) > 0 {
                       live_neighbors += 1;
                       sat_sum += n.saturation as f32;
                       lum_sum += n.luminance as f32;
@@ -410,11 +508,12 @@ impl Universe {
               let cell = self.cells[idx];
 
               /* ---------- decide if the cell is alive next frame ---------------- */
-              let bit_index = live_neighbors as u32 + if cell.saturation > 0 { 9 } else { 0 };
+              let bit_index = live_neighbors as u32
+                  + if cell.activity_value(life_channel) > 0 { 9 } else { 0 };
               let next_alive = ((rule >> bit_index) & 1) == 1;
 
               /* ---------- build the next‐generation pixel ----------------------- */
-              let next_cell = match (cell.lifetime > 0, next_alive) {
+              let next_cell = match (cell.alpha > 0, next_alive) {
                   /* --- survive --------------------------------------------------- */
                   (true, true) => {
                       let new_sat = (cell.saturation as f32
@@ -431,14 +530,14 @@ impl Universe {
                       let new_lum = (cell.saturation as f32
                           - decay_step as f32 * E * lum_decay_factor)
                           .max(0.0);
-                      let new_life = (cell.lifetime as f32
+                      let new_life = (cell.alpha as f32
                           - decay_step as f32 * E * life_decay_factor)
                           .max(0.0);
                       Individual {
                           hue: cell.hue,
                           saturation: new_sat as u8,
                           luminance: new_lum as u8,
-                          lifetime: new_life as u8,
+                          alpha: new_life as u8,
                       }
                   }
 
@@ -468,7 +567,7 @@ impl Universe {
                       let (mut sin_sum, mut cos_sum) = (0.0f32, 0.0f32);
                       for nidx in self.neighbour_indices(row, col) {
                           let n = self.cells[nidx];
-                          if n.lifetime > 0 {
+                          if n.alpha > 0 {
                               let angle = (n.hue as f32 / 255.0) * TAU;
                               sin_sum += angle.sin();
                               cos_sum += angle.cos();
@@ -487,7 +586,7 @@ impl Universe {
                           hue,
                           saturation: avg(sat_sum),
                           luminance: avg(lum_sum).saturating_add(1),
-                          lifetime: 255,
+                          alpha: 255,
                       }
                   }
 
@@ -496,7 +595,7 @@ impl Universe {
                       hue: cell.hue,
                       saturation: (cell.saturation as f32 * sat_ghost_factor) as u8,
                       luminance: (cell.luminance as f32 * lum_decay_factor) as u8,
-                      lifetime: (cell.luminance as f32 * life_decay_factor) as u8,
+                      alpha: (cell.luminance as f32 * life_decay_factor) as u8,
                   },
               };
 
@@ -506,14 +605,14 @@ impl Universe {
               sum_hue += next_cell.hue as u32;
               sum_sat += next_cell.saturation as u32;
               sum_lum += next_cell.luminance as u32;
-              sum_life += next_cell.lifetime as u32;
+              sum_life += next_cell.alpha as u32;
 
               histogram_hue[next_cell.hue as usize] += 1;
               histogram_sat[next_cell.saturation as usize] += 1;
               histogram_lum[next_cell.luminance as usize] += 1;
-              histogram_life[next_cell.lifetime as usize] += 1;
+              histogram_life[next_cell.alpha as usize] += 1;
 
-              if next_cell.lifetime > 0 {
+              if next_cell.alpha > 0 {
                   alive_count += 1;
               }
 
@@ -525,11 +624,11 @@ impl Universe {
       self.stats.avg_hue = sum_hue as f32 / total as f32;
       self.stats.avg_saturation = sum_sat as f32 / total as f32;
       self.stats.avg_luminance = sum_lum as f32 / total as f32;
-      self.stats.avg_lifetime = sum_life as f32 / total as f32;
+      self.stats.avg_alpha = sum_life as f32 / total as f32;
       self.stats.median_hue = median_from_histogram(&histogram_hue, total);
       self.stats.median_saturation = median_from_histogram(&histogram_sat, total);
       self.stats.median_luminance = median_from_histogram(&histogram_lum, total);
-      self.stats.median_lifetime = median_from_histogram(&histogram_life, total);
+      self.stats.median_alpha = median_from_histogram(&histogram_life, total);
       self.stats.alive_count;
       self.stats.dead_count = total - alive_count;
       self.stats.population_ratio = alive_count as f32 / total as f32;
@@ -537,7 +636,14 @@ impl Universe {
       std::mem::swap(&mut self.cells, &mut self.next);
   }
 
-
+  #[wasm_bindgen]
+  pub fn dispose(&mut self) {
+      self.cells.clear();
+      self.next.clear();
+      self.draw_buffer.clear();
+      self.width = 0;
+      self.height = 0;
+  }
 
   pub fn resize(&mut self, new_width: u32, new_height: u32) {
     let new_size = (new_width * new_height) as usize;
@@ -563,9 +669,12 @@ impl Universe {
   }
 
   pub fn set_cell(&mut self, row: u32, col: u32, hue: u8, sat: u8, lum: u8, t: u8) {
+    if self.width == 0 || self.height == 0 {
+        return;
+    }
     if row < self.height && col < self.width {
       let idx = self.index(row, col);
-      self.cells[idx] = Individual { hue, saturation: sat, luminance: lum, lifetime: t};
+      self.cells[idx] = Individual { hue, saturation: sat, luminance: lum, alpha: t};
       self.draw_buffer[idx] = true;
     }
   }
