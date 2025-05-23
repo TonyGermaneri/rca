@@ -73,7 +73,7 @@ import init, { Universe } from '@ca/ca';
   const hint = document.createElement('div');
   panel.className = 'panel';
   panel.style.display = 'none';
-  hint.innerHTML = "Press H to show controls<br>Press R for New Random";
+  hint.innerHTML = "Press H to show controls<br>Press R for Random";
   hint.className = "hint";
   window.addEventListener('keydown', (e) => {
     switch (e.key.toLowerCase()) {
@@ -81,7 +81,7 @@ import init, { Universe } from '@ca/ca';
       case 'arrowup':  e.preventDefault(); rule += 1; document.getElementById('rule_input').value = rule;   break;
       case 'arrowdown':  e.preventDefault(); rule -= 1; document.getElementById('rule_input').value = rule;   break;
       case 'c':  universe.clear();    break;
-      case 'b':  setBackgroundImage();    break;
+      case 'b':  setBackgroundImage(backgroundImageData);    break;
       case 'a':  universe.randomize(); break;
       case 'r':  randomizeParams(); break;
       case 'h':  panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; break;
@@ -141,7 +141,7 @@ import init, { Universe } from '@ca/ca';
     shapeColor:          { tag: 'input', props: { type: 'color', oninput: (e) => { shapeColor = e.target.value; updateShapes(); }, value: backgroundColor } },
     brushColor:          { tag: 'input', props: { type: 'color', oninput: updateColors, value: brushColor } },
     backgroundColor:     { tag: 'input', props: { type: 'color', oninput: (e) => { backgroundColor = e.target.value; document.body.style.backgroundColor = backgroundColor; }, value: backgroundColor } },
-    brushSize:           { tag: 'input', props: { type: 'range', min: 1, max: 200, value: brushRadius, oninput: (e) => { brushRadius = parseInt(e.target.value);  } }},
+    brushRadius:         { tag: 'input', props: { type: 'range', min: 1, max: 200, value: brushRadius, oninput: (e) => { brushRadius = parseInt(e.target.value);  } }},
     pause:               { tag: 'input', props: { type: 'checkbox', onclick: (e) => { paused = e.target.checked; if (!paused) { render(); } }}},
     clear:               { tag: 'button', innerHTML: 'Clear', props: { onclick: () => { universe.clear();  }}},
     setColor:            { tag: 'button', innerHTML: 'Set', props: { onclick: () => { universe.set_grid(currentColorH, currentColorS, currentColorL);  }}},
@@ -221,8 +221,7 @@ import init, { Universe } from '@ca/ca';
     if (!url) { return; }
     const img = new Image();
     img.onload = () => {
-      backgroundImageData = img;
-      setBackgroundImage();
+      setBackgroundImage(img);
     };
     img.src = "data:image/svg+xml;utf8," + encodeURIComponent(url);
   }
@@ -233,7 +232,24 @@ import init, { Universe } from '@ca/ca';
     const b = Math.floor(Math.random() * 256).toString(16).padStart(2, '0');
     return `#${r}${g}${b}`;
   }
+
+  function setBrushColor(c) {
+    brushColor = c;
+    document.getElementById('brushColor').value = brushColor;
+    let { h, s, l } = hexToHSL(brushColor);
+    currentColorH = h;
+    currentColorS = s;
+    currentColorL = l;
+  }
   function randomizeParams() {
+
+    setBrushColor(getRandomColor());
+    brushRadius = getRandomIntInclusive(1, 20);
+
+    document.getElementById('brushRadius').value = brushRadius;
+
+
+
 
     rule = getRandomIntInclusive(
       parseInt(controlSet.rule.props.min ?? 0),
@@ -301,6 +317,9 @@ import init, { Universe } from '@ca/ca';
     );
     document.getElementById('ruleChangeRate').value = ruleChangeRate;
 
+    backgroundMode = Math.random() > 0.5 ? 'stretch' : 'repeat';
+
+
     shapeColor = getRandomColor();
     shapeScale  = getRandomFloatInclusive(0.001, 0.02);
     document.getElementById('shapeColor').value = shapeColor;
@@ -317,10 +336,9 @@ import init, { Universe } from '@ca/ca';
 
   controlIds = Object.keys(controlSet);
   controls = createControls(controlSet);
-  Object.values(controls).forEach((control) => {panel.appendChild(control);})
   panel.appendChild(info);
+  Object.values(controls).forEach((control) => {panel.appendChild(control);})
   panel.appendChild(indv);
-
 
   updateInfo()
 
@@ -344,7 +362,7 @@ import init, { Universe } from '@ca/ca';
     backgroundMode = event.target.value;
   }
 
-  function setBackgroundImage() {
+  function setBackgroundImage(backgroundImageData) {
     if (!backgroundImageData) {
       alert("Please upload a background image first.");
       return;
@@ -896,7 +914,7 @@ void main() {
       if (stampOnRotate) {
         universe.clear();
         if (backgroundImageData) {
-          setBackgroundImage();
+          setBackgroundImage(backgroundImageData);
         } else {
           universe.randomize();
         }
