@@ -5,6 +5,7 @@ edition = "2021"
 description = "Rust Cellular Automata"
 repository = "https://github.com/TonyGermaneri/rca"
 license = "MIT"
+build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

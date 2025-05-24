@@ -29,7 +29,7 @@ import init, { Universe, LifeChannel } from '@ca/ca';
   let t = 0;
   let lifeChannel = getRandomLifeChannel();
   let ruleChange = 0;
-  let rotateHue = false;
+  let useRGB = false;
   let autoRotate = false;
   let stampOnRotate = false;
   let u18max = 262143;
@@ -403,9 +403,9 @@ import init, { Universe, LifeChannel } from '@ca/ca';
       tag: 'input',
       props: { type: 'checkbox', onclick: (e) => { autoRotate = e.target.checked; if (!autoRotate) { render(); }}}
     },
-    rotateHue: {
+    "RGB/HSL": {
       tag: 'input',
-      props: { type: 'checkbox', onclick: (e) => { rotateHue = e.target.checked; if (!rotateHue) { render(); }}}
+      props: { type: 'checkbox', onclick: (e) => { useRGB = e.target.checked; if (!useRGB) { render(); }}}
     }
   };
 
@@ -1092,6 +1092,7 @@ precision mediump float;
 
 uniform sampler2D u_texture;
 uniform bool u_alpha;
+uniform bool u_use_RBG;
 varying vec2 v_texcoord;
 
 
@@ -1135,12 +1136,18 @@ vec3 hsl2rgb(vec3 hsl) {
 }
 void main() {
   vec4 hsl = texture2D(u_texture, vec2(v_texcoord.x, 1.0 - v_texcoord.y)).rgba;
+  vec3 rgb;
 
   float hue = hsl.r;
   float sat = hsl.g;
   float lum = hsl.b;
 
-  vec3 rgb = hsl2rgb(vec3(hue, sat, lum)); 
+  if (u_use_RBG) {
+    rgb = vec3(hue, sat, lum);
+  } else {
+    rgb = hsl2rgb(vec3(hue, sat, lum));
+  }
+
   if (u_alpha) {
     gl_FragColor = vec4(rgb, hsl.a);
   } else {
@@ -1185,6 +1192,7 @@ void main() {
   gl.uniform1i(uTex, 0);
 
   const glAlpha = gl.getUniformLocation(program, 'u_alpha');
+  const gluseRGB = gl.getUniformLocation(program, 'u_use_RBG');
 
 
   // ── Main render loop ─────────────────────────────────────────────────────
@@ -1236,10 +1244,11 @@ void main() {
       satGhostFactor,
       hueDriftStrength,
       hueLerpFactor,
-      LifeChannel.Saturation,
+      lifeChannel,
     );
 
     gl.uniform1i(glAlpha, alpha ? 1 : 0);
+    gl.uniform1i(gluseRGB, useRGB ? 1 : 0);
 
     universe.tick();
 

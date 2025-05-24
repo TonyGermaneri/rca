@@ -1,9 +1,6 @@
 use wasm_bindgen::prelude::*;
 use rand::Rng;
 
-use std::f32::consts::E;
-// pub const E: f32 = 2.71828182845904523536028747135266250_f32; // 2.7182818284590451f64
-
 /// Parameters controlling how cells gain or lose brightness.
 /// They can be tweaked while the simulation is running to explore different
 /// ecological dynamics without recompiling.
@@ -448,12 +445,11 @@ impl Universe {
   /// so classic Conway “B3/S23” is
   /// `0b0000001_00000100_00001000u32  // 0x0408`
   pub fn tick(&mut self) {
-
       if self.width == 0 || self.height == 0 {
           return;
       }
 
-      use std::f32::consts::TAU;
+      use std::f32::consts::{E, TAU};
 
       let LifeParams {
           rule,
@@ -469,12 +465,18 @@ impl Universe {
           life_channel,
       } = self.params;
 
+      let decay_step_f = decay_step as f32;
+      let sat_decay_term = decay_step_f * E * sat_decay_factor;
+      let lum_decay_term = decay_step_f * E * lum_decay_factor;
+      let life_decay_term = decay_step_f * E * life_decay_factor;
+      let sat_recovery = recovery_step as f32 * sat_recovery_factor;
+
       let mut sum_hue = 0u32;
       let mut sum_sat = 0u32;
       let mut sum_lum = 0u32;
       let mut sum_life = 0u32;
-
       let mut alive_count = 0usize;
+
       let mut histogram_sat = [0usize; 256];
       let mut histogram_lum = [0usize; 256];
       let mut histogram_hue = [0usize; 256];
@@ -484,19 +486,17 @@ impl Universe {
           for col in 0..self.width {
               let idx = self.index(row, col);
 
-              /* pixels the UI has just “painted” stay unchanged one tick    */
               if std::mem::take(&mut self.draw_buffer[idx]) {
                   self.next[idx] = self.cells[idx];
                   continue;
               }
 
-              /* ---------- count live neighbours & accumulate colour data -------- */
-
+              let cell = self.cells[idx];
               let mut live_neighbors = 0u8;
               let mut sat_sum = 0.0f32;
               let mut lum_sum = 0.0f32;
 
-              for nidx in self.neighbour_indices(row, col) {
+              for &nidx in &self.neighbour_indices(row, col) {
                   let n = self.cells[nidx];
                   if n.activity_value(life_channel) > 0 {
                       live_neighbors += 1;
@@ -505,45 +505,26 @@ impl Universe {
                   }
               }
 
-              let cell = self.cells[idx];
-
-              /* ---------- decide if the cell is alive next frame ---------------- */
               let bit_index = live_neighbors as u32
                   + if cell.activity_value(life_channel) > 0 { 9 } else { 0 };
               let next_alive = ((rule >> bit_index) & 1) == 1;
 
-              /* ---------- build the next‐generation pixel ----------------------- */
               let next_cell = match (cell.alpha > 0, next_alive) {
-                  /* --- survive --------------------------------------------------- */
                   (true, true) => {
-                      let new_sat = (cell.saturation as f32
-                          + recovery_step as f32 * sat_recovery_factor)
-                          .min(255.0);
+                      let new_sat = (cell.saturation as f32 + sat_recovery).min(255.0);
                       Individual { saturation: new_sat as u8, ..cell }
                   }
-
-                  /* --- death ----------------------------------------------------- */
                   (true, false) => {
-                      let new_sat = (cell.saturation as f32
-                          - decay_step as f32 * E * sat_decay_factor)
-                          .max(0.0);
-                      let new_lum = (cell.saturation as f32
-                          - decay_step as f32 * E * lum_decay_factor)
-                          .max(0.0);
-                      let new_life = (cell.alpha as f32
-                          - decay_step as f32 * E * life_decay_factor)
-                          .max(0.0);
                       Individual {
                           hue: cell.hue,
-                          saturation: new_sat as u8,
-                          luminance: new_lum as u8,
-                          alpha: new_life as u8,
+                          saturation: (cell.saturation as f32 - sat_decay_term).max(0.0) as u8,
+                          luminance: (cell.saturation as f32 - lum_decay_term).max(0.0) as u8,
+                          alpha: (cell.alpha as f32 - life_decay_term).max(0.0) as u8,
                       }
                   }
-
-                  /* --- birth ----------------------------------------------------- */
                   (false, true) => {
-                      /* helpers */
+                      // Birth case (expensive hue calc)
+                      let neighbors = self.neighbour_indices(row, col);
                       let avg = |sum: f32| {
                           if live_neighbors == 0 {
                               0
@@ -552,10 +533,9 @@ impl Universe {
                           }
                       };
 
-                      /* brightest neighbour’s hue */
                       let mut strongest_hue = 0u8;
                       let mut max_lum = 0u8;
-                      for nidx in self.neighbour_indices(row, col) {
+                      for &nidx in &neighbors {
                           let n = self.cells[nidx];
                           if n.luminance > max_lum {
                               max_lum = n.luminance;
@@ -563,9 +543,9 @@ impl Universe {
                           }
                       }
 
-                      /* circular mean hue blended toward strongest hue */
-                      let (mut sin_sum, mut cos_sum) = (0.0f32, 0.0f32);
-                      for nidx in self.neighbour_indices(row, col) {
+                      let mut sin_sum = 0.0f32;
+                      let mut cos_sum = 0.0f32;
+                      for &nidx in &neighbors {
                           let n = self.cells[nidx];
                           if n.alpha > 0 {
                               let angle = (n.hue as f32 / 255.0) * TAU;
@@ -573,8 +553,13 @@ impl Universe {
                               cos_sum += angle.cos();
                           }
                       }
-                      let mean_angle =
-                          if sin_sum == 0.0 && cos_sum == 0.0 { 0.0 } else { sin_sum.atan2(cos_sum) };
+
+                      let mean_angle = if sin_sum == 0.0 && cos_sum == 0.0 {
+                          0.0
+                      } else {
+                          sin_sum.atan2(cos_sum)
+                      };
+
                       let strongest_angle = (strongest_hue as f32 / 255.0) * TAU;
                       let mixed_angle = (1.0 - hue_lerp_factor) * mean_angle
                           + hue_lerp_factor * strongest_angle;
@@ -589,8 +574,6 @@ impl Universe {
                           alpha: 255,
                       }
                   }
-
-                  /* --- remain dead ---------------------------------------------- */
                   _ => Individual {
                       hue: cell.hue,
                       saturation: (cell.saturation as f32 * sat_ghost_factor) as u8,
@@ -601,12 +584,11 @@ impl Universe {
 
               self.next[idx] = next_cell;
 
-              // Accumulate stats
+              // Stats
               sum_hue += next_cell.hue as u32;
               sum_sat += next_cell.saturation as u32;
               sum_lum += next_cell.luminance as u32;
               sum_life += next_cell.alpha as u32;
-
               histogram_hue[next_cell.hue as usize] += 1;
               histogram_sat[next_cell.saturation as usize] += 1;
               histogram_lum[next_cell.luminance as usize] += 1;
@@ -615,12 +597,10 @@ impl Universe {
               if next_cell.alpha > 0 {
                   alive_count += 1;
               }
-
           }
       }
 
       let total = (self.width * self.height) as usize;
-
       self.stats.avg_hue = sum_hue as f32 / total as f32;
       self.stats.avg_saturation = sum_sat as f32 / total as f32;
       self.stats.avg_luminance = sum_lum as f32 / total as f32;
@@ -629,12 +609,12 @@ impl Universe {
       self.stats.median_saturation = median_from_histogram(&histogram_sat, total);
       self.stats.median_luminance = median_from_histogram(&histogram_lum, total);
       self.stats.median_alpha = median_from_histogram(&histogram_life, total);
-      self.stats.alive_count;
       self.stats.dead_count = total - alive_count;
       self.stats.population_ratio = alive_count as f32 / total as f32;
 
       std::mem::swap(&mut self.cells, &mut self.next);
   }
+
 
   #[wasm_bindgen]
   pub fn dispose(&mut self) {
@@ -713,9 +693,11 @@ fn median_from_histogram(hist: &[usize; 256], total: usize) -> f32 {
 #[cfg(feature = "console_error_panic_hook")]
 #[wasm_bindgen(start)]
 pub fn start() {
+  const VERSION: &str = env!("RCA_VERSION");
   console_error_panic_hook::set_once();
   wasm_logger::init(wasm_logger::Config::default());
-  log::info!("starting up");
+  const COMMIT: &str = env!("GIT_COMMIT_HASH");
+  log::info!("RCA v{} ({})", VERSION, COMMIT);
 }
 
 #[cfg(feature = "wee_alloc")]
