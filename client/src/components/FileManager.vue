@@ -24,7 +24,7 @@
           <v-tabs-window-item eager value="save">
             <v-text-field v-model="saveName" autocomplete="off" label="CA Name" @keydown.stop />
             <v-checkbox v-model="includeBuffer" label="Include CA Buffer" />
-            <v-checkbox v-model="incudeLoadedBackgroundImage" label="Include Loaded Background Image" />
+            <v-checkbox v-model="includeLoadedBackgroundImage" label="Include Loaded Background Image" />
             <v-btn :disabled="!saveName" @click="save">Save</v-btn>
             <v-btn class="ml-2" :disabled="!saveName" @click="download">Download</v-btn>
           </v-tabs-window-item>
@@ -37,7 +37,6 @@
   </div>
 </template>
 <script>
-  import { LifeChannel } from '@ca/ca';
   import { hslaToRgbaFlatArray } from '../utils.js';
 
   export default {
@@ -48,7 +47,7 @@
         currentCa: null,
         ca: null,
         includeBuffer: false,
-        incudeLoadedBackgroundImage: false,
+        includeLoadedBackgroundImage: false,
         localCa: [],
         saveName: '',
         saveId: null,
@@ -66,7 +65,7 @@
           hueDriftStrength: 0.01,
           hueLerpFactor: 0.1,
           lifeChannel: 'Alpha',
-          pixelScale: 0.25,
+          pixelScale: 1,
           brushRadius: 20,
           brushColor: '#FFFFFFFF',
           colorModel: 'HSLA',
@@ -204,7 +203,7 @@
           data.state.bufferHeight = this.ca.universe.height();
         }
 
-        if (!this.incudeLoadedBackgroundImage) {
+        if (!this.includeLoadedBackgroundImage) {
           data.state.background = [];
         }
 

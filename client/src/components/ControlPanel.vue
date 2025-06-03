@@ -140,7 +140,7 @@
             />
           </v-tabs-window-item>
           <v-tabs-window-item eager value="image">
-            <Image />
+            <ImageManager />
           </v-tabs-window-item>
           <v-tabs-window-item eager value="midi">
             <Midi />
@@ -161,14 +161,13 @@
 
 <script>
   import Slider from './Slider.vue';
-  import Image from './Image.vue';
+  import ImageManager from './ImageManager.vue';
   import RulePicker from './RulePicker.vue';
   import Midi from './Midi.vue';
   import FileManager from './FileManager.vue';
-  import { getRandomColor, getRandomFloatInclusive, getRandomIntInclusive } from '../utils.js';
-  import { LifeChannel } from '@ca/ca';
+  import { getRandomFloatInclusive, getRandomIntInclusive } from '../utils.js';
   export default {
-    components: { RulePicker, Slider, Image, FileManager },
+    components: { RulePicker, Slider, ImageManager, FileManager, Midi },
     data () {
       return {
         ca: null,
@@ -178,7 +177,7 @@
         performance: { fps: 0, bpm: 0 },
         panel: null,
         paused: false,
-        panelVisible: true,
+        panelVisible: false,
         isDragging: false,
         tab: null,
         isShape: false,
@@ -276,8 +275,6 @@
       listen('keydown', this.keyHandler);
       listen('image:background-set', e => this.isShape = e.detail.isShape);
       emit('image:set-random-shape');
-
-      const lastTickTime = null;
     },
     beforeUnmount () {
       removeListener('mousemove', this.onDrag);

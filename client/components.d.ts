@@ -8,19 +8,14 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
-    AppFooter: typeof import('./src/components/AppFooter.vue')['default']
     Brush: typeof import('./src/components/Brush.vue')['default']
-    CA: typeof import('./src/components/CA.vue')['default']
     ControlPanel: typeof import('./src/components/ControlPanel.vue')['default']
     FileManager: typeof import('./src/components/FileManager.vue')['default']
-    HelloWorld: typeof import('./src/components/HelloWorld.vue')['default']
-    Image: typeof import('./src/components/Image.vue')['default']
+    ImageManager: typeof import('./src/components/ImageManager.vue')['default']
     Midi: typeof import('./src/components/Midi.vue')['default']
-    MidiListeners: typeof import('./src/components/MidiListeners.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     RulePicker: typeof import('./src/components/RulePicker.vue')['default']
-    Rules: typeof import('./src/components/Rules.vue')['default']
     Slider: typeof import('./src/components/Slider.vue')['default']
     Universe: typeof import('./src/components/Universe.vue')['default']
     Viewport: typeof import('./src/components/Viewport.vue')['default']

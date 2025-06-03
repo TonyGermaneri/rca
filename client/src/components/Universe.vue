@@ -23,7 +23,7 @@
         mouse: { x: 0, y: 0 },
         paused: false,
         devicePixelRatio: 1,
-        pixelScale: 0.25,
+        pixelScale: 1,
         rule: 770,
         decayStep: 1,
         recoveryStep: 60,

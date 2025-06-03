@@ -58,7 +58,7 @@
   import { getRandomColor, getRandomFloatInclusive } from '../utils.js';
 
   export default {
-    name: 'Image',
+    name: 'ImageManager',
     components: { Slider },
     props: {
       modelValue: {
@@ -66,6 +66,7 @@
         default: null,
       },
     },
+    emits: ['update:modelValue'],
     data () {
       return {
         ca: null,

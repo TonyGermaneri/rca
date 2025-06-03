@@ -2,7 +2,7 @@
   <div class="brush" />
 </template>
 <script>
-  import { getRandomColor, hexToHslaU8, newId } from '../utils.js';
+  import { hexToHslaU8, newId } from '../utils.js';
   export default {
     data () {
       return {
