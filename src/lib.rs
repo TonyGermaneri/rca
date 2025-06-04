@@ -116,16 +116,16 @@ impl Default for LifeParams {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct Individual {
-  hue: u8,
-  saturation: u8,
-  luminance: u8,
-  alpha: u8,
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct Individual {
+  pub hue: u8,
+  pub saturation: u8,
+  pub luminance: u8,
+  pub alpha: u8,
 }
 
 impl Individual {
-    fn activity_value(&self, channel: LifeChannel) -> u8 {
+    pub fn activity_value(&self, channel: LifeChannel) -> u8 {
         match channel {
             LifeChannel::Hue => self.hue,
             LifeChannel::Saturation => self.saturation,
@@ -135,7 +135,7 @@ impl Individual {
     }
 }
 
-fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+pub fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     let max = r.max(g.max(b));
     let min = r.min(g.min(b));
     let l = (max + min) / 2.0;
@@ -158,10 +158,10 @@ fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     (h, s, l)
 }
 
-#[derive(Default)]
-struct BrushState {
-    last_id: Option<u64>,
-    points: Vec<(u32, u32)>,
+#[derive(Default, Debug, Clone, PartialEq)]
+pub struct BrushState {
+    pub last_id: Option<u64>,
+    pub points: Vec<(u32, u32)>,
 }
 
 #[wasm_bindgen]
@@ -616,6 +616,7 @@ impl Universe {
       self.stats.median_saturation = median_from_histogram(&histogram_sat, total_size);
       self.stats.median_luminance = median_from_histogram(&histogram_lum, total_size);
       self.stats.median_alpha = median_from_histogram(&histogram_life, total_size);
+      self.stats.alive_count = alive_count;
       self.stats.dead_count = total_size - alive_count;
       self.stats.population_ratio = alive_count as f32 / total as f32;
 
@@ -683,9 +684,48 @@ impl Universe {
       self.width = 0;
       self.height = 0;
   }
+
+  /// Save the current state of the universe and return it as a Vec<u8>
+  pub fn save_state(&self) -> Vec<u8> {
+      let mut state = Vec::with_capacity(self.cells_len());
+      let cells_ptr = self.cells.as_ptr() as *const u8;
+      unsafe {
+          state.extend_from_slice(std::slice::from_raw_parts(cells_ptr, self.cells_len()));
+      }
+      state
+  }
+
+  /// Load a previously saved state into the universe
+  /// Returns true if successful, false if the state size doesn't match
+  pub fn load_state(&mut self, state: &[u8]) -> bool {
+      if state.len() != self.cells_len() {
+          return false;
+      }
+
+      let cells_ptr = self.cells.as_mut_ptr() as *mut u8;
+      unsafe {
+          std::ptr::copy_nonoverlapping(state.as_ptr(), cells_ptr, state.len());
+      }
+
+      // Also update the next buffer to match
+      self.next.copy_from_slice(&self.cells);
+      true
+  }
 }
 
-fn median_from_histogram(hist: &[usize; 256], total: usize) -> f32 {
+// Test accessors outside wasm_bindgen
+impl Universe {
+  #[cfg(test)]
+  pub fn cells(&self) -> &Vec<Individual> { &self.cells }
+
+  #[cfg(test)]
+  pub fn params(&self) -> &LifeParams { &self.params }
+
+  #[cfg(test)]
+  pub fn brush_state(&self) -> &BrushState { &self.brush_state }
+}
+
+pub fn median_from_histogram(hist: &[usize; 256], total: usize) -> f32 {
     let mut count = 0;
     for (val, &freq) in hist.iter().enumerate() {
         count += freq;
@@ -709,3 +749,6 @@ pub fn start() {
 #[cfg(feature = "wee_alloc")]
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+
+#[cfg(test)]
+mod tests;
