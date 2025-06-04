@@ -4,6 +4,7 @@
 <script>
   import init, { LifeChannel, Universe } from '@ca/ca';
   import glSetup from './glSetup.js';
+  import CAShader from './caShader.js';
   export default {
     data () {
       return {
@@ -20,6 +21,8 @@
         universe: null,
         buffer: null,
         drawBuffer: null,
+        caShader: null,
+        useShader: false,
         mouse: { x: 0, y: 0 },
         paused: false,
         devicePixelRatio: 1,
@@ -52,6 +55,7 @@
           'pixelScale',
           'useAlpha',
           'useRGB',
+          'useShader',
           'tickInterval',
         ],
       }
@@ -78,6 +82,7 @@
           this.lifeChannel,
           this.useRGB,
           this.useAlpha,
+          this.useShader,
           this.tickInterval,
           this.syncToMidi,
         ]
@@ -89,6 +94,16 @@
       },
       parameters () {
         this.setParameters();
+      },
+      useShader (newVal) {
+        if (newVal && this.caShader) {
+          // Switching to shader mode - sync state from CPU to shader
+          this.syncCpuToShader();
+          this.caShader.show();
+        } else if (this.caShader) {
+          // Switching to CPU mode
+          this.caShader.hide();
+        }
       },
     },
     async mounted () {
@@ -108,15 +123,35 @@
       listen('ca:load-buffer', this.setBuffer);
       this.setCanvasSize();
       this.drawBuffer = glSetup(this.canvas);
+
+      // Initialize shader version (creates its own canvas)
+      try {
+        this.caShader = new CAShader(this.canvas);
+        this.caShader.resize(this.width, this.height);
+        console.log('WebGL2 shader initialized successfully');
+        this.useShader = true;
+      } catch (error) {
+        console.warn('WebGL2 shader not available, falling back to CPU version:', error);
+        this.useShader = false;
+        this.caShader = null;
+      }
+
       this.updateBufferPtr();
       this.setParameters();
       this.startRender();
     },
+    beforeUnmount() {
+      if (this.caShader) {
+        this.caShader.dispose();
+      }
+    },
     methods: {
       mousemove (e) {
-        const rect = this.canvas.getBoundingClientRect();
-        const scaleX = this.canvas.width / rect.width;
-        const scaleY = this.canvas.height / rect.height;
+        // Use the appropriate canvas for coordinate calculation
+        const targetCanvas = (this.useShader && this.caShader) ? this.caShader.canvas : this.canvas;
+        const rect = targetCanvas.getBoundingClientRect();
+        const scaleX = targetCanvas.width / rect.width;
+        const scaleY = targetCanvas.height / rect.height;
         this.mouse.x = Math.floor((e.clientX - rect.left) * scaleX / this.devicePixelRatio);
         this.mouse.y = Math.floor((e.clientY - rect.top) * scaleY / this.devicePixelRatio);
         emit('ca:mouse', this.mouse);
@@ -152,6 +187,23 @@
           this.hueLerpFactor,
           this.lifeChannel,
         );
+
+        // Update shader parameters if available
+        if (this.caShader) {
+          this.caShader.setParams(
+            this.rule,
+            this.decayStep,
+            this.recoveryStep,
+            this.satRecoveryFactor,
+            this.satDecayFactor,
+            this.lumDecayFactor,
+            this.lifeDecayFactor,
+            this.satGhostFactor,
+            this.hueDriftStrength,
+            this.hueLerpFactor,
+            this.lifeChannel,
+          );
+        }
         const newParameters = {
           rule: this.rule,
           decayStep: this.decayStep,
@@ -168,6 +220,7 @@
           pixelScale: this.pixelScale,
           useAlpha: this.useAlpha,
           useRGB: this.useRGB,
+          useShader: this.useShader,
         };
         emit('ca:parameters-set', newParameters);
       },
@@ -182,15 +235,27 @@
         const newW = Math.floor(innerWidth * this.pixelScale);
         const newH = Math.floor(innerHeight * this.pixelScale);
         this.universe.resize(newW, newH);
+
+        // Resize shader if available
+        if (this.caShader) {
+          this.caShader.resize(newW, newH);
+        }
+
         this.updateBufferPtr();
         this.setCanvasSize();
         emit('ca:resize', this);
       },
       setBuffer (e) {
         const { width, height, buffer } = e.detail;
-        this.universe.clear();
-        this.universe.draw_stamp_at(Math.floor(width / 2), Math.floor(height / 2), width, height, buffer);
-        this.updateBufferPtr();
+
+        if (this.useShader && this.caShader) {
+          this.caShader.clear();
+          this.caShader.drawStampAt(Math.floor(width / 2), Math.floor(height / 2), width, height, buffer);
+        } else {
+          this.universe.clear();
+          this.universe.draw_stamp_at(Math.floor(width / 2), Math.floor(height / 2), width, height, buffer);
+          this.updateBufferPtr();
+        }
       },
       updateBufferPtr () {
         const ptr = this.universe.cells_ptr();
@@ -210,44 +275,77 @@
         if (elapsed >= this.tickInterval || !this.syncToMidi) {
           if (!this.paused) {
             emit('ca:tick', this);
-            this.universe.tick();
+
+            if (this.useShader && this.caShader) {
+              // Use shader version
+              this.caShader.tick();
+            } else {
+              // Use CPU version
+              this.universe.tick();
+            }
           }
           this.lastTime = now;
         }
-        this.drawBuffer(
-          this.universe.width(),
-          this.universe.height(),
-          this.universe.width() * this.devicePixelRatio,
-          this.universe.height() * this.devicePixelRatio,
-          this.useAlpha,
-          this.useRGB,
-          this.buffer
-        );
-        this.updateBufferPtr();
+
+        if (this.useShader && this.caShader) {
+          // Render using shader
+          this.caShader.render(this.useAlpha, this.useRGB);
+        } else {
+          // Render using CPU version
+          this.drawBuffer(
+            this.universe.width(),
+            this.universe.height(),
+            this.universe.width() * this.devicePixelRatio,
+            this.universe.height() * this.devicePixelRatio,
+            this.useAlpha,
+            this.useRGB,
+            this.buffer
+          );
+          this.updateBufferPtr();
+        }
+
         this.animationFrameId = requestAnimationFrame(this.render);
         emit('ca:render', this);
       },
       clear () {
         this.universe.clear();
+        if (this.caShader) {
+          this.caShader.clear();
+        }
       },
       pause (e) {
         this.paused = e.detail;
         console.log('Pause', this.paused);
       },
       step () {
-        // const now = performance.now();
-        // const elapsed = now - this.lastTime;
-        // this.lastTime = now - (elapsed % this.tickInterval);
-        this.universe.tick();
+        if (this.useShader && this.caShader) {
+          this.caShader.tick();
+        } else {
+          this.universe.tick();
+        }
       },
       noise () {
         this.universe.randomize();
+        if (this.caShader) {
+          this.caShader.randomize();
+        }
       },
       drawStamp (e) {
         //{x: cx, y: cy, width: imageData.width, height: imageData.height, image: data}
         const args = e.detail;
-        this.universe.draw_stamp_at(args.x, args.y, args.width, args.height, args.image);
-        this.updateBufferPtr();
+
+        if (this.useShader && this.caShader) {
+          this.caShader.drawStampAt(args.x, args.y, args.width, args.height, args.image);
+        } else {
+          this.universe.draw_stamp_at(args.x, args.y, args.width, args.height, args.image);
+          this.updateBufferPtr();
+        }
+      },
+      syncCpuToShader () {
+        if (!this.caShader || !this.buffer) return;
+
+        // Copy current CPU state to shader
+        this.caShader.loadFromBuffer(this.buffer, this.universe.width(), this.universe.height());
       },
     },
   }

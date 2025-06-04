@@ -9,23 +9,98 @@
         <v-tab value="file">File</v-tab>
         <v-tab value="about">About</v-tab>
       </v-tabs>
+
+
+      <div style="text-align: center;">
+        <div class="d-inline-block" :style="{width: '10px', height: '10px', background: pulseColor}" />
+        <div class="d-inline-block" :style="{width: '10px', height: '10px', background: paused ? 'gray' : 'green'}" />
+
+        <v-menu>
+          <template v-slot:activator="{ props }">
+            <v-icon
+              v-bind="props"
+              class="menu-button"
+              size="x-large"
+              icon="mdi-menu"
+            />
+          </template>
+
+          <v-list>
+            <v-list-item @click="randomize">
+              <v-list-item-title>Random</v-list-item-title>
+              <template v-slot:append>
+                <v-chip size="x-small" variant="outlined">R</v-chip>
+              </template>
+            </v-list-item>
+
+            <v-list-item @click="addMidiListener">
+              <v-list-item-title>Add MIDI Out</v-list-item-title>
+            </v-list-item>
+
+            <v-list-item @click="pause">
+              <v-list-item-title>{{ paused ? 'Resume' : 'Pause' }}</v-list-item-title>
+              <template v-slot:append>
+                <v-chip size="x-small" variant="outlined">Space</v-chip>
+              </template>
+            </v-list-item>
+
+            <v-list-item @click="step">
+              <v-list-item-title>Step</v-list-item-title>
+              <template v-slot:append>
+                <v-chip size="x-small" variant="outlined">S</v-chip>
+              </template>
+            </v-list-item>
+
+            <v-divider></v-divider>
+
+            <v-list-item @click="clear">
+              <v-list-item-title>Clear</v-list-item-title>
+              <template v-slot:append>
+                <v-chip size="x-small" variant="outlined">C</v-chip>
+              </template>
+            </v-list-item>
+
+            <v-list-item @click="noise">
+              <v-list-item-title>Noise</v-list-item-title>
+              <template v-slot:append>
+                <v-chip size="x-small" variant="outlined">N</v-chip>
+              </template>
+            </v-list-item>
+
+            <v-list-item @click="setBackground">
+              <v-list-item-title>Set Background</v-list-item-title>
+              <template v-slot:append>
+                <v-chip size="x-small" variant="outlined">B</v-chip>
+              </template>
+            </v-list-item>
+
+            <v-divider></v-divider>
+
+            <v-list-item @click="toggleShader">
+              <v-list-item-title>
+                Switch to {{ useShader ? 'CPU' : 'GPU' }} Mode
+              </v-list-item-title>
+              <template v-slot:prepend>
+                <v-icon :color="useShader ? 'primary' : 'default'">
+                  {{ useShader ? 'mdi-gpu' : 'mdi-cpu-64-bit' }}
+                </v-icon>
+              </template>
+              <template v-slot:append>
+                <v-chip size="x-small" variant="outlined">G</v-chip>
+              </template>
+            </v-list-item>
+          </v-list>
+        </v-menu>
+      </div>
+
+
       <v-card-text>
         <v-tabs-window v-model="tab">
           <v-tabs-window-item eager value="file">
             <FileManager />
           </v-tabs-window-item>
           <v-tabs-window-item class="attr" eager value="attr">
-            <div style="text-align: center;">
-              <div class="d-inline-block" :style="{width: '10px', height: '10px', background: pulseColor}" />
-              <div class="d-inline-block" :style="{width: '10px', height: '10px', background: paused ? 'gray' : 'green'}" />
-              <v-btn class="mb-2" @click="randomize">Random</v-btn>
-              <v-btn class="mb-2" @click="addMidiListener">Add MIDI Out</v-btn>
-              <v-btn class="mb-2" @click="pause">Pause</v-btn>
-              <v-btn class="mb-2" @click="step">Step</v-btn>
-              <v-btn class="mb-2" @click="clear">Clear</v-btn>
-              <v-btn class="mb-2" @click="noise">Noise</v-btn>
-              <v-btn class="mb-2" @click="setBackground">BG</v-btn>
-            </div>
+
             <RulePicker v-model="rule" />
             <v-radio-group v-model="lifeChannel" class="mt-5" inline label="Life">
               <v-radio :label="isRGB ? 'Red' : 'Hue'" value="Hue" />
@@ -127,7 +202,7 @@
               class="mb-6"
               label="Brush Radius"
               :max="1000"
-              :min="0"
+              :min="1"
               :step="1"
             />
             <v-color-picker
@@ -200,6 +275,7 @@
         brushRadius: 1,
         brushColor: '#FFFFFFFF',
         colorModel: 'HSLA',
+        useShader: true,
         channels: [
           'Hue',
           'Saturation',
@@ -230,6 +306,7 @@
           this.lifeChannel,
           this.colorModel,
           this.pixelScale,
+          this.useShader,
         ]
       },
     },
@@ -257,6 +334,7 @@
           pixelScale: this.pixelScale,
           useAlpha: this.isAlpha,
           useRGB: this.isRGB,
+          useShader: this.useShader,
         })
       },
     },
@@ -371,6 +449,9 @@
       noise () {
         emit('ca:noise');
       },
+      toggleShader () {
+        this.useShader = !this.useShader;
+      },
       startDrag (e) {
         e.stopPropagation();
         this.isDragging = true;
@@ -404,5 +485,10 @@
 .attr {
   height: 450px;
   overflow: scroll;
+}
+.menu-button {
+  position: absolute;
+  right: 14px;
+  top: 6px;
 }
 </style>

@@ -8,7 +8,7 @@
       return {
         ca              : null,
         drawMode        : 'add',
-        brushRadius     : 0,
+        brushRadius     : 1,
         brushColor      : '#FFFFFFFF',
         drawing         : false,
         drawingSessionId: newId(),
@@ -32,23 +32,44 @@
       listen('brush:color', this.setColor);
     },
     methods: {
-      drawBrush (x, y) {
-        this.ca.universe.draw_brush(
-          this.x,
-          this.y,
-          this.brushRadius,
-          this.drawMode === 'add',
-          this.brushColorHSL.h,
-          this.brushColorHSL.s,
-          this.brushColorHSL.l,
-          this.drawingSessionId
-        );
+      drawBrush () {
+        if (this.ca.useShader && this.ca.caShader) {
+          // Use shader version
+          this.ca.caShader.drawBrush(
+            this.x,
+            this.y,
+            this.brushRadius,
+            this.drawMode === 'add',
+            this.brushColorHSL.h,
+            this.brushColorHSL.s,
+            this.brushColorHSL.l,
+            this.drawingSessionId
+          );
+          // Immediately render the changes
+          this.ca.caShader.render(this.ca.useAlpha, this.ca.useRGB);
+        } else {
+          // Use CPU version
+          this.ca.universe.draw_brush(
+            this.x,
+            this.y,
+            this.brushRadius,
+            this.drawMode === 'add',
+            this.brushColorHSL.h,
+            this.brushColorHSL.s,
+            this.brushColorHSL.l,
+            this.drawingSessionId
+          );
+        }
       },
       mouseup (e) {
         this.drawing = false;
       },
       mousedown (e) {
-        if (e.target !== this.ca.canvas) { return; }
+        // Check if target is either the original canvas or the shader canvas
+        const isValidTarget = e.target === this.ca.canvas ||
+          (this.ca.caShader && e.target === this.ca.caShader.canvas);
+        if (!isValidTarget) { return; }
+
         e.preventDefault();
         this.drawMode = e.button === 2 ? 'remove' : 'add';
         this.drawing = true;

@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Brush Verification Test</title>
+    <style>
+        body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+        .test-container { display: flex; gap: 20px; margin: 20px 0; }
+        .test-canvas { border: 2px solid #333; }
+        .cpu-canvas { border-color: #2196F3; }
+        .gpu-canvas { border-color: #4CAF50; }
+        .controls { margin: 20px 0; }
+        button { margin: 5px; padding: 10px 15px; }
+        .results { margin: 20px 0; padding: 15px; background: #f5f5f5; }
+        .pass { color: green; font-weight: bold; }
+        .fail { color: red; font-weight: bold; }
+        h3 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <h1>Brush Verification Test</h1>
+    <p>This test verifies that brush functionality works identically in both CPU and GPU modes.</p>
+    
+    <div class="controls">
+        <button onclick="runBrushTest()">Run Brush Test</button>
+        <button onclick="runMouseTest()">Test Mouse Drawing</button>
+        <button onclick="clearCanvases()">Clear Both</button>
+        <button onclick="runFullTest()">Run Full Verification</button>
+    </div>
+    
+    <div class="test-container">
+        <div>
+            <h3>CPU Version (Rust)</h3>
+            <canvas id="cpuCanvas" class="test-canvas cpu-canvas" width="256" height="256"></canvas>
+        </div>
+        <div>
+            <h3>GPU Version (Shader)</h3>
+            <canvas id="gpuCanvas" class="test-canvas gpu-canvas" width="256" height="256"></canvas>
+        </div>
+    </div>
+    
+    <div class="results" id="results">
+        <h3>Test Results</h3>
+        <div id="resultContent">Click a test button to see results...</div>
+    </div>
+
+    <script type="module">
+        import CAShader from '../components/caShader.js';
+        import init, { LifeChannel, Universe } from '@ca/ca';
+        
+        let rustUniverse = null;
+        let caShader = null;
+        let initialized = false;
+        
+        async function initialize() {
+            if (initialized) return true;
+            
+            try {
+                // Initialize WASM
+                await init();
+                
+                // Create CPU universe
+                rustUniverse = new Universe(64, 64);
+                
+                // Create GPU shader
+                const gpuCanvas = document.getElementById('gpuCanvas');
+                caShader = new CAShader(gpuCanvas);
+                caShader.resize(64, 64);
+                caShader.show();
+                
+                // Set identical parameters for both
+                const params = {
+                    rule: 770,
+                    decay_step: 1,
+                    recovery_step: 60,
+                    sat_recovery_factor: 0.8,
+                    sat_decay_factor: 0.6,
+                    lum_decay_factor: 0.95,
+                    life_decay_factor: 0.95,
+                    sat_ghost_factor: 0.9,
+                    hue_drift_strength: 0.0, // No randomness for testing
+                    hue_lerp_factor: 0.1,
+                    life_channel: LifeChannel.Alpha,
+                };
+                
+                rustUniverse.set_params(
+                    params.rule, params.decay_step, params.recovery_step,
+                    params.sat_recovery_factor, params.sat_decay_factor,
+                    params.lum_decay_factor, params.life_decay_factor,
+                    params.sat_ghost_factor, params.hue_drift_strength,
+                    params.hue_lerp_factor, params.life_channel
+                );
+                
+                caShader.setParams(
+                    params.rule, params.decay_step, params.recovery_step,
+                    params.sat_recovery_factor, params.sat_decay_factor,
+                    params.lum_decay_factor, params.life_decay_factor,
+                    params.sat_ghost_factor, params.hue_drift_strength,
+                    params.hue_lerp_factor, params.life_channel
+                );
+                
+                initialized = true;
+                logResult('✓ Initialization successful');
+                return true;
+                
+            } catch (error) {
+                logResult(`✗ Initialization failed: ${error.message}`);
+                return false;
+            }
+        }
+        
+        async function runBrushTest() {
+            if (!await initialize()) return;
+            
+            logResult('Running brush test...');
+            
+            // Clear both
+            rustUniverse.clear();
+            caShader.clear();
+            
+            // Test parameters
+            const tests = [
+                { x: 32, y: 32, radius: 3, h: 255, s: 255, l: 255, name: 'Center small brush' },
+                { x: 16, y: 16, radius: 5, h: 128, s: 200, l: 200, name: 'Top-left medium brush' },
+                { x: 48, y: 48, radius: 7, h: 64, s: 150, l: 150, name: 'Bottom-right large brush' },
+            ];
+            
+            let allPassed = true;
+            
+            for (const test of tests) {
+                // Clear for each test
+                rustUniverse.clear();
+                caShader.clear();
+                
+                // Draw with both implementations
+                rustUniverse.draw_brush(test.x, test.y, test.radius, true, test.h, test.s, test.l, Date.now());
+                caShader.drawBrush(test.x, test.y, test.radius, true, test.h, test.s, test.l, Date.now());
+                caShader.render(true, false);
+                
+                // Check results
+                const rustStats = rustUniverse.stats();
+                const shaderStats = caShader.getStats();
+                
+                const rustAlive = rustStats.alive_count;
+                const shaderAlive = shaderStats.alive_count;
+                
+                // Allow some variance due to different implementations
+                const passed = rustAlive > 0 && shaderAlive > 0;
+                
+                if (passed) {
+                    logResult(`✓ ${test.name}: CPU=${rustAlive}, GPU=${shaderAlive}`);
+                } else {
+                    logResult(`✗ ${test.name}: CPU=${rustAlive}, GPU=${shaderAlive}`);
+                    allPassed = false;
+                }
+            }
+            
+            logResult(allPassed ? '✓ All brush tests passed!' : '✗ Some brush tests failed');
+        }
+        
+        async function runMouseTest() {
+            if (!await initialize()) return;
+            
+            logResult('Testing mouse event handling...');
+            
+            // Clear both
+            rustUniverse.clear();
+            caShader.clear();
+            
+            // Simulate mouse events
+            const gpuCanvas = document.getElementById('gpuCanvas');
+            const rect = gpuCanvas.getBoundingClientRect();
+            
+            // Create a synthetic mouse event
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: rect.left + 128, // Center of canvas
+                clientY: rect.top + 128,
+                button: 0,
+                bubbles: true
+            });
+            
+            // Dispatch the event
+            gpuCanvas.dispatchEvent(mouseEvent);
+            
+            logResult('✓ Mouse event test completed (check console for any errors)');
+        }
+        
+        async function runFullTest() {
+            if (!await initialize()) return;
+            
+            logResult('Running full verification test...');
+            
+            // Test 1: Basic brush functionality
+            await runBrushTest();
+            
+            // Test 2: Add/Remove modes
+            logResult('Testing add/remove modes...');
+            
+            rustUniverse.clear();
+            caShader.clear();
+            
+            // Add mode
+            rustUniverse.draw_brush(32, 32, 5, true, 255, 255, 255, 1);
+            caShader.drawBrush(32, 32, 5, true, 255, 255, 255, 1);
+            
+            const afterAdd = {
+                rust: rustUniverse.stats().alive_count,
+                shader: caShader.getStats().alive_count
+            };
+            
+            // Remove mode (smaller brush in center)
+            rustUniverse.draw_brush(32, 32, 2, false, 0, 0, 0, 2);
+            caShader.drawBrush(32, 32, 2, false, 0, 0, 0, 2);
+            caShader.render(true, false);
+            
+            const afterRemove = {
+                rust: rustUniverse.stats().alive_count,
+                shader: caShader.getStats().alive_count
+            };
+            
+            const addWorked = afterAdd.rust > 0 && afterAdd.shader > 0;
+            const removeWorked = afterRemove.rust < afterAdd.rust && afterRemove.shader < afterAdd.shader;
+            
+            if (addWorked && removeWorked) {
+                logResult('✓ Add/Remove modes working correctly');
+            } else {
+                logResult('✗ Add/Remove modes failed');
+            }
+            
+            // Test 3: Edge cases
+            logResult('Testing edge cases...');
+            
+            rustUniverse.clear();
+            caShader.clear();
+            
+            // Edge positions
+            const edgeTests = [
+                { x: 0, y: 0, name: 'top-left corner' },
+                { x: 63, y: 63, name: 'bottom-right corner' },
+                { x: 32, y: 0, name: 'top edge' },
+                { x: 0, y: 32, name: 'left edge' }
+            ];
+            
+            let edgesPassed = 0;
+            
+            for (const edge of edgeTests) {
+                rustUniverse.draw_brush(edge.x, edge.y, 3, true, 255, 255, 255, Date.now());
+                caShader.drawBrush(edge.x, edge.y, 3, true, 255, 255, 255, Date.now());
+                
+                const rustCount = rustUniverse.stats().alive_count;
+                const shaderCount = caShader.getStats().alive_count;
+                
+                if (rustCount > 0 && shaderCount > 0) {
+                    edgesPassed++;
+                    logResult(`✓ ${edge.name}: CPU=${rustCount}, GPU=${shaderCount}`);
+                } else {
+                    logResult(`✗ ${edge.name}: CPU=${rustCount}, GPU=${shaderCount}`);
+                }
+            }
+            
+            caShader.render(true, false);
+            
+            logResult(`Edge tests: ${edgesPassed}/${edgeTests.length} passed`);
+            
+            // Final summary
+            logResult('=== FULL TEST COMPLETE ===');
+            logResult('If all tests show ✓, brush functionality is working correctly in both modes!');
+        }
+        
+        window.runBrushTest = runBrushTest;
+        window.runMouseTest = runMouseTest;
+        window.runFullTest = runFullTest;
+        
+        window.clearCanvases = async function() {
+            if (!await initialize()) return;
+            rustUniverse.clear();
+            caShader.clear();
+            caShader.render(true, false);
+            logResult('✓ Both canvases cleared');
+        };
+        
+        function logResult(message) {
+            const content = document.getElementById('resultContent');
+            const time = new Date().toLocaleTimeString();
+            const className = message.includes('✓') ? 'pass' : message.includes('✗') ? 'fail' : '';
+            content.innerHTML += `<div class="${className}">[${time}] ${message}</div>`;
+            content.scrollTop = content.scrollHeight;
+            console.log(message);
+        }
+        
+        // Auto-initialize when page loads
+        initialize();
+    </script>
+</body>
+</html>

@@ -827,16 +827,33 @@
           apply(this.velocityTarget, velVal);
 
           /* issue the draw call immediately (or quantise its ts if you prefer) */
-          this.ca.universe.draw_brush(
-            params.x,
-            params.y,
-            params.radius,
-            params.add === 'add',
-            params.hue,
-            params.saturation,
-            params.luminance,
-            id
-          );
+          if (this.ca.useShader && this.ca.caShader) {
+            // Use shader version
+            this.ca.caShader.drawBrush(
+              params.x,
+              params.y,
+              params.radius,
+              params.add === 'add',
+              params.hue,
+              params.saturation,
+              params.luminance,
+              id
+            );
+            // Immediately render the changes
+            this.ca.caShader.render(this.ca.useAlpha, this.ca.useRGB);
+          } else {
+            // Use CPU version
+            this.ca.universe.draw_brush(
+              params.x,
+              params.y,
+              params.radius,
+              params.add === 'add',
+              params.hue,
+              params.saturation,
+              params.luminance,
+              id
+            );
+          }
 
           this.activeBrushes.set(key, { id, params });
         }
