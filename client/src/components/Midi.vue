@@ -2,6 +2,9 @@
   <div>
     <v-card>
       <v-card-text>
+        <div class="d-inline-block" :style="{width: '10px', height: '10px', background: pulseColor}" />
+        <div class="d-inline-block" :style="{width: '10px', height: '10px', background: paused ? 'gray' : 'green'}" />
+
         <v-select
           v-model="midiClockInput"
           item-title="name"
@@ -279,6 +282,7 @@
         buffer: null,
         midiAccess: null,
         midiOutputs: [],
+        pulseColor: '#FF0000FF',
         noteTarget: 'x',
         velocityTarget: 'y',
         midiClockInput: null,
@@ -428,6 +432,7 @@
       listen('ca:init', e => this.ca = e.detail);
       listen('ca:set-parameters', e => this.pixelScale = e.detail.pixelScale);
       listen('midi:add-listener', this.addMidiListener);
+      listen('midi:clock-quarter-note-pulse', this.quarterNotePulse);
       emit('ca:tempo', this.bpm);
       this.resize();
       setTimeout(async () => {
@@ -436,6 +441,14 @@
 
     },
     methods: {
+      quarterNotePulse (e){
+        this.midiTimeStamp = e.detail.midiTimeStamp;
+        this.msPerBeat = e.detail.msPerBeat;
+        this.pulseColor = '#FFFFFFFF';
+        setTimeout(() => {
+          this.pulseColor = '#FF0000FF';
+        }, 100);
+      },
       checkQuanta (e, listener, field) {
         if (listener.dotted && listener.triplet) {
           listener[field] = true;

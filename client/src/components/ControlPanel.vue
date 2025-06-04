@@ -12,9 +12,6 @@
 
 
       <div style="text-align: center;">
-        <div class="d-inline-block" :style="{width: '10px', height: '10px', background: pulseColor}" />
-        <div class="d-inline-block" :style="{width: '10px', height: '10px', background: paused ? 'gray' : 'green'}" />
-
         <v-menu>
           <template v-slot:activator="{ props }">
             <v-icon
@@ -259,10 +256,10 @@
         offsetX: 0,
         offsetY: 0,
         rule: 6152,
-        decayStep: 1,
-        recoveryStep: 60,
-        satRecoveryFactor: 0.8,
-        satDecayFactor: 0.6,
+        decayStep: 255,
+        recoveryStep: 255,
+        satRecoveryFactor: 1.0,
+        satDecayFactor: 1.0,
         lumDecayFactor: 0.95,
         lifeDecayFactor: 0.95,
         satGhostFactor: 0.9,
@@ -400,6 +397,7 @@
           case 'h': this.panelVisible = !this.panelVisible; break;
           case 'p': this.pause(); break;
           case 's': this.step(); break;
+          case 'g': this.useShader = !this.useShader; break;
           case ']': this.brushRadius += 1; break;
           case '[': this.brushRadius -= 1; break;
           default:
