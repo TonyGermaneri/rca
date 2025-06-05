@@ -5,9 +5,9 @@
         <v-tab value="attr">Rule {{ rule }}</v-tab>
         <v-tab value="brush">Brush</v-tab>
         <v-tab value="image">Image</v-tab>
-        <v-tab value="midi">MIDI</v-tab>
+        <v-tab value="midiout">MIDI Out</v-tab>
+        <v-tab value="midiin">MIDI In</v-tab>
         <v-tab value="file">File</v-tab>
-        <v-tab value="about">About</v-tab>
       </v-tabs>
 
 
@@ -216,8 +216,11 @@
           <v-tabs-window-item eager value="image">
             <ImageManager />
           </v-tabs-window-item>
-          <v-tabs-window-item eager value="midi">
-            <Midi />
+          <v-tabs-window-item eager value="midiout">
+            <Midi :isInput="false"/>
+          </v-tabs-window-item>
+          <v-tabs-window-item eager value="midiin">
+            <Midi :isInput="true"/>
           </v-tabs-window-item>
           <v-tabs-window-item eager value="about">
             WASM/GL 32bit HLSA Multichannel Rust Cellular Automata<br>
