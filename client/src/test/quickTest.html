@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CA Shader Quick Test</title>
+    <style>
+        body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+        canvas { border: 1px solid #ccc; }
+        .controls { margin: 10px 0; }
+        button { margin: 5px; padding: 10px; }
+        .status { margin: 10px 0; padding: 10px; background: #f0f0f0; }
+    </style>
+</head>
+<body>
+    <h1>CA Shader Quick Test</h1>
+    <div class="status" id="status">Initializing...</div>
+
+    <div class="controls">
+        <button onclick="testShader()">Test Shader</button>
+        <button onclick="testConway()">Test Conway's Game of Life</button>
+        <button onclick="randomize()">Randomize</button>
+        <button onclick="clear()">Clear</button>
+        <button onclick="step()">Step</button>
+        <button onclick="toggleAnimation()">Toggle Animation</button>
+    </div>
+
+    <canvas id="testCanvas" width="512" height="512"></canvas>
+
+    <div id="output"></div>
+
+    <script type="module">
+        import CAShader from '../components/caShader.js';
+
+        let caShader = null;
+        let animating = false;
+        let animationId = null;
+
+        async function init() {
+            const canvas = document.getElementById('testCanvas');
+            const status = document.getElementById('status');
+
+            try {
+                caShader = new CAShader(canvas);
+                caShader.resize(128, 128);
+                caShader.show(); // Show the shader canvas for testing
+
+                // Set Conway's Game of Life parameters
+                caShader.setParams(
+                    770,    // Conway's rule (B3/S23)
+                    1,      // decay_step
+                    60,     // recovery_step
+                    0.8,    // sat_recovery_factor
+                    0.6,    // sat_decay_factor
+                    0.95,   // lum_decay_factor
+                    0.95,   // life_decay_factor
+                    0.9,    // sat_ghost_factor
+                    0.01,   // hue_drift_strength
+                    0.1,    // hue_lerp_factor
+                    3       // life_channel (Alpha)
+                );
+
+                status.textContent = 'Shader initialized successfully!';
+                status.style.background = '#d4edda';
+
+                // Start with a random pattern
+                caShader.randomize();
+                caShader.render(true, false);
+
+            } catch (error) {
+                status.textContent = `Error: ${error.message}`;
+                status.style.background = '#f8d7da';
+                console.error('Shader initialization failed:', error);
+            }
+        }
+
+        function animate() {
+            if (!animating || !caShader) return;
+
+            caShader.tick();
+            caShader.render(true, false);
+
+            animationId = requestAnimationFrame(animate);
+        }
+
+        // Global functions for buttons
+        window.testShader = function() {
+            if (!caShader) {
+                alert('Shader not initialized');
+                return;
+            }
+
+            const output = document.getElementById('output');
+            output.innerHTML = '<h3>Shader Test Results:</h3>';
+
+            try {
+                // Test basic operations
+                caShader.clear();
+                output.innerHTML += '<p>✓ Clear operation successful</p>';
+
+                caShader.randomize();
+                output.innerHTML += '<p>✓ Randomize operation successful</p>';
+
+                caShader.tick();
+                output.innerHTML += '<p>✓ Tick operation successful</p>';
+
+                caShader.render(true, false);
+                output.innerHTML += '<p>✓ Render operation successful</p>';
+
+                const stats = caShader.getStats();
+                output.innerHTML += `<p>✓ Stats: ${stats.alive_count} alive cells</p>`;
+
+                output.innerHTML += '<p><strong>All tests passed!</strong></p>';
+
+            } catch (error) {
+                output.innerHTML += `<p>❌ Error: ${error.message}</p>`;
+            }
+        };
+
+        window.testConway = function() {
+            if (!caShader) return;
+
+            caShader.clear();
+
+            // Create a glider pattern
+            const glider = [
+                [0, 1, 0],
+                [0, 0, 1],
+                [1, 1, 1]
+            ];
+
+            const startX = 60;
+            const startY = 60;
+
+            for (let y = 0; y < glider.length; y++) {
+                for (let x = 0; x < glider[y].length; x++) {
+                    if (glider[y][x]) {
+                        caShader.setCell(startX + x, startY + y, 128, 255, 255, 255);
+                    }
+                }
+            }
+
+            caShader.render(true, false);
+            document.getElementById('output').innerHTML = '<p>Glider pattern created. Click Step or Toggle Animation to see it move.</p>';
+        };
+
+        window.randomize = function() {
+            if (!caShader) return;
+            caShader.randomize();
+            caShader.render(true, false);
+        };
+
+        window.clear = function() {
+            if (!caShader) return;
+            caShader.clear();
+            caShader.render(true, false);
+        };
+
+        window.step = function() {
+            if (!caShader) return;
+            caShader.tick();
+            caShader.render(true, false);
+        };
+
+        window.toggleAnimation = function() {
+            animating = !animating;
+            if (animating) {
+                animate();
+                document.querySelector('button[onclick="toggleAnimation()"]').textContent = 'Stop Animation';
+            } else {
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                }
+                document.querySelector('button[onclick="toggleAnimation()"]').textContent = 'Start Animation';
+            }
+        };
+
+        // Initialize when page loads
+        init();
+    </script>
+</body>
+</html>

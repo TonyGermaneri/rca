@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Brush & Stamp Interactive Test</title>
+    <style>
+        body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+        .container { display: flex; gap: 20px; }
+        .canvas-container { position: relative; }
+        canvas { border: 1px solid #ccc; }
+        .controls { width: 300px; }
+        .control-group { margin: 15px 0; padding: 10px; border: 1px solid #ddd; }
+        .control-group h3 { margin-top: 0; }
+        button { margin: 5px; padding: 10px; }
+        input, select { margin: 5px; }
+        .status { margin: 10px 0; padding: 10px; background: #f0f0f0; }
+        .mode-indicator { padding: 5px; margin: 5px 0; font-weight: bold; }
+        .cpu-mode { background: #e3f2fd; }
+        .gpu-mode { background: #e8f5e8; }
+        .test-results { margin: 10px 0; padding: 10px; background: #fff3cd; max-height: 200px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h1>Brush & Stamp Interactive Test</h1>
+
+    <div class="container">
+        <div class="canvas-container">
+            <canvas id="testCanvas" width="512" height="512"></canvas>
+            <div class="mode-indicator" id="modeIndicator">CPU Mode</div>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <h3>Mode Control</h3>
+                <button onclick="toggleMode()">Toggle CPU/GPU</button>
+                <button onclick="syncStates()">Sync States</button>
+                <button onclick="clear()">Clear</button>
+            </div>
+
+            <div class="control-group">
+                <h3>Brush Controls</h3>
+                <label>Radius: <input type="range" id="brushRadius" min="1" max="20" value="5"></label>
+                <span id="radiusValue">5</span><br>
+                <label>Hue: <input type="range" id="brushHue" min="0" max="255" value="128"></label>
+                <span id="hueValue">128</span><br>
+                <label>Saturation: <input type="range" id="brushSat" min="0" max="255" value="255"></label>
+                <span id="satValue">255</span><br>
+                <label>Luminance: <input type="range" id="brushLum" min="0" max="255" value="255"></label>
+                <span id="lumValue">255</span><br>
+                <label>Mode:
+                    <select id="brushMode">
+                        <option value="add">Add</option>
+                        <option value="remove">Remove</option>
+                    </select>
+                </label><br>
+                <button onclick="testBrush()">Test Brush</button>
+            </div>
+
+            <div class="control-group">
+                <h3>Stamp Controls</h3>
+                <button onclick="createTestStamp('red')">Red Square</button>
+                <button onclick="createTestStamp('green')">Green Circle</button>
+                <button onclick="createTestStamp('blue')">Blue Triangle</button>
+                <button onclick="createTestStamp('gradient')">Gradient</button>
+                <button onclick="createTestStamp('transparent')">Transparent</button>
+                <br>
+                <button onclick="testStampPositions()">Test Edge Positions</button>
+            </div>
+
+            <div class="control-group">
+                <h3>Automated Tests</h3>
+                <button onclick="runBrushTests()">Run Brush Tests</button>
+                <button onclick="runStampTests()">Run Stamp Tests</button>
+                <button onclick="runAllTests()">Run All Tests</button>
+            </div>
+
+            <div class="test-results" id="testResults">
+                <h4>Test Results</h4>
+                <div id="resultsContent">Click a test button to see results...</div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import CAShader from '../components/caShader.js';
+        import init, { LifeChannel, Universe } from '@ca/ca';
+        import { BrushStampTest } from './brushStampTest.js';
+
+        let rustUniverse = null;
+        let caShader = null;
+        let useShader = false;
+        let isDrawing = false;
+
+        async function initialize() {
+            const canvas = document.getElementById('testCanvas');
+
+            // Initialize WASM
+            await init();
+
+            // Create Rust universe
+            rustUniverse = new Universe(128, 128);
+
+            // Create shader CA
+            try {
+                caShader = new CAShader(canvas);
+                caShader.resize(128, 128);
+                caShader.hide(); // Start with CPU mode
+                console.log('Both CA implementations initialized');
+            } catch (error) {
+                console.error('Shader initialization failed:', error);
+                document.getElementById('testResults').innerHTML =
+                    '<div style="color: red;">WebGL2 not supported. CPU-only mode.</div>';
+            }
+
+            // Set up mouse drawing
+            setupMouseDrawing(canvas);
+
+            // Set up control listeners
+            setupControls();
+
+            updateModeIndicator();
+        }
+
+        function setupMouseDrawing(canvas) {
+            canvas.addEventListener('mousedown', (e) => {
+                isDrawing = true;
+                drawAtMouse(e);
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                if (isDrawing) {
+                    drawAtMouse(e);
+                }
+            });
+
+            canvas.addEventListener('mouseup', () => {
+                isDrawing = false;
+            });
+
+            canvas.addEventListener('mouseleave', () => {
+                isDrawing = false;
+            });
+        }
+
+        function drawAtMouse(e) {
+            const canvas = document.getElementById('testCanvas');
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor((e.clientX - rect.left) * 128 / canvas.clientWidth);
+            const y = Math.floor((e.clientY - rect.top) * 128 / canvas.clientHeight);
+
+            const radius = parseInt(document.getElementById('brushRadius').value);
+            const hue = parseInt(document.getElementById('brushHue').value);
+            const sat = parseInt(document.getElementById('brushSat').value);
+            const lum = parseInt(document.getElementById('brushLum').value);
+            const addMode = document.getElementById('brushMode').value === 'add';
+
+            if (useShader && caShader) {
+                caShader.drawBrush(x, y, radius, addMode, hue, sat, lum, BigInt(Date.now()));
+                caShader.render(true, false);
+            } else {
+                rustUniverse.draw_brush(x, y, radius, addMode, hue, sat, lum, BigInt(Date.now()));
+                // Note: In real app, this would trigger a render
+            }
+        }
+
+        function setupControls() {
+            // Update value displays
+            document.getElementById('brushRadius').addEventListener('input', (e) => {
+                document.getElementById('radiusValue').textContent = e.target.value;
+            });
+            document.getElementById('brushHue').addEventListener('input', (e) => {
+                document.getElementById('hueValue').textContent = e.target.value;
+            });
+            document.getElementById('brushSat').addEventListener('input', (e) => {
+                document.getElementById('satValue').textContent = e.target.value;
+            });
+            document.getElementById('brushLum').addEventListener('input', (e) => {
+                document.getElementById('lumValue').textContent = e.target.value;
+            });
+        }
+
+        function updateModeIndicator() {
+            const indicator = document.getElementById('modeIndicator');
+            if (useShader && caShader) {
+                indicator.textContent = 'GPU Mode (Shader)';
+                indicator.className = 'mode-indicator gpu-mode';
+            } else {
+                indicator.textContent = 'CPU Mode (Rust)';
+                indicator.className = 'mode-indicator cpu-mode';
+            }
+        }
+
+        // Global functions for buttons
+        window.toggleMode = function() {
+            if (!caShader) {
+                alert('Shader not available');
+                return;
+            }
+
+            useShader = !useShader;
+            if (useShader) {
+                caShader.show();
+            } else {
+                caShader.hide();
+            }
+            updateModeIndicator();
+        };
+
+        window.syncStates = function() {
+            if (!caShader) return;
+
+            // Get CPU buffer and sync to shader
+            const ptr = rustUniverse.cells_ptr();
+            const len = rustUniverse.cells_len();
+            const memory = new WebAssembly.Memory({ initial: 1 });
+            const buffer = new Uint8Array(memory.buffer, ptr, len);
+
+            caShader.loadFromBuffer(buffer, 128, 128);
+            if (useShader) {
+                caShader.render(true, false);
+            }
+        };
+
+        window.clear = function() {
+            rustUniverse.clear();
+            if (caShader) {
+                caShader.clear();
+                if (useShader) {
+                    caShader.render(true, false);
+                }
+            }
+        };
+
+        window.testBrush = function() {
+            const radius = parseInt(document.getElementById('brushRadius').value);
+            const hue = parseInt(document.getElementById('brushHue').value);
+            const sat = parseInt(document.getElementById('brushSat').value);
+            const lum = parseInt(document.getElementById('brushLum').value);
+            const addMode = document.getElementById('brushMode').value === 'add';
+
+            const x = 64, y = 64; // Center
+
+            logResult(`Testing brush: radius=${radius}, hue=${hue}, sat=${sat}, lum=${lum}, mode=${addMode ? 'add' : 'remove'}, at (${x},${y})`);
+
+            if (useShader && caShader) {
+                console.log('Using shader for brush test');
+                caShader.drawBrush(x, y, radius, addMode, hue, sat, lum, BigInt(Date.now()));
+                caShader.render(true, false);
+
+                // Get stats to verify
+                const stats = caShader.getStats();
+                logResult(`Shader stats after brush: alive=${stats.alive_count}`);
+            } else {
+                console.log('Using CPU for brush test');
+                rustUniverse.draw_brush(x, y, radius, addMode, hue, sat, lum, BigInt(Date.now()));
+
+                // Get stats to verify
+                const stats = rustUniverse.stats();
+                logResult(`CPU stats after brush: alive=${stats.alive_count}`);
+            }
+        };
+
+        window.createTestStamp = function(type) {
+            let stampData, width, height;
+
+            switch (type) {
+                case 'red':
+                    width = height = 8;
+                    stampData = new Uint8Array(width * height * 4);
+                    for (let i = 0; i < stampData.length; i += 4) {
+                        stampData[i] = 255; stampData[i+1] = 0; stampData[i+2] = 0; stampData[i+3] = 255;
+                    }
+                    break;
+
+                case 'green':
+                    width = height = 6;
+                    stampData = new Uint8Array(width * height * 4);
+                    // Create circle pattern
+                    for (let y = 0; y < height; y++) {
+                        for (let x = 0; x < width; x++) {
+                            const dx = x - width/2, dy = y - height/2;
+                            const dist = Math.sqrt(dx*dx + dy*dy);
+                            const i = (y * width + x) * 4;
+                            if (dist <= width/2) {
+                                stampData[i] = 0; stampData[i+1] = 255; stampData[i+2] = 0; stampData[i+3] = 255;
+                            }
+                        }
+                    }
+                    break;
+
+                case 'blue':
+                    width = height = 6;
+                    stampData = new Uint8Array(width * height * 4);
+                    // Create triangle pattern
+                    for (let y = 0; y < height; y++) {
+                        for (let x = 0; x < width; x++) {
+                            const i = (y * width + x) * 4;
+                            if (x >= y && x < width - y) {
+                                stampData[i] = 0; stampData[i+1] = 0; stampData[i+2] = 255; stampData[i+3] = 255;
+                            }
+                        }
+                    }
+                    break;
+
+                case 'gradient':
+                    width = height = 10;
+                    stampData = new Uint8Array(width * height * 4);
+                    for (let y = 0; y < height; y++) {
+                        for (let x = 0; x < width; x++) {
+                            const i = (y * width + x) * 4;
+                            stampData[i] = Math.floor(255 * x / width);
+                            stampData[i+1] = Math.floor(255 * y / height);
+                            stampData[i+2] = 128;
+                            stampData[i+3] = 255;
+                        }
+                    }
+                    break;
+
+                case 'transparent':
+                    width = height = 4;
+                    stampData = new Uint8Array(width * height * 4);
+                    // Checkerboard with transparency
+                    for (let y = 0; y < height; y++) {
+                        for (let x = 0; x < width; x++) {
+                            const i = (y * width + x) * 4;
+                            const alpha = ((x + y) % 2) ? 255 : 0;
+                            stampData[i] = 255; stampData[i+1] = 255; stampData[i+2] = 0; stampData[i+3] = alpha;
+                        }
+                    }
+                    break;
+            }
+
+            const x = 64, y = 64; // Center
+
+            if (useShader && caShader) {
+                caShader.drawStampAt(x, y, width, height, stampData);
+                caShader.render(true, false);
+            } else {
+                rustUniverse.draw_stamp_at(x, y, width, height, stampData);
+            }
+
+            logResult(`Stamp test: ${type} stamp (${width}x${height}) at (${x},${y})`);
+        };
+
+        window.testStampPositions = function() {
+            const width = 6, height = 6;
+            const stampData = new Uint8Array(width * height * 4);
+            for (let i = 0; i < stampData.length; i += 4) {
+                stampData[i] = 255; stampData[i+1] = 0; stampData[i+2] = 255; stampData[i+3] = 255;
+            }
+
+            const positions = [
+                { x: 0, y: 0, name: 'top-left' },
+                { x: 127, y: 127, name: 'bottom-right' },
+                { x: 64, y: 0, name: 'top-center' },
+                { x: 0, y: 64, name: 'left-center' }
+            ];
+
+            positions.forEach(pos => {
+                if (useShader && caShader) {
+                    caShader.drawStampAt(pos.x, pos.y, width, height, stampData);
+                } else {
+                    rustUniverse.draw_stamp_at(pos.x, pos.y, width, height, stampData);
+                }
+            });
+
+            if (useShader && caShader) {
+                caShader.render(true, false);
+            }
+
+            logResult(`Tested stamp positions: ${positions.map(p => p.name).join(', ')}`);
+        };
+
+        window.runBrushTests = async function() {
+            logResult('Running brush tests...');
+            const tester = new BrushStampTest();
+            await tester.initialize();
+
+            const tests = [
+                () => tester.testBasicBrush(),
+                () => tester.testBrushModes(),
+                () => tester.testBrushSizes()
+            ];
+
+            let passed = 0;
+            for (const test of tests) {
+                if (await test()) passed++;
+            }
+
+            logResult(`Brush tests: ${passed}/${tests.length} passed`);
+            tester.testResults.forEach(result => {
+                logResult(`  ${result.test}: ${result.success ? 'PASS' : 'FAIL'}`);
+            });
+        };
+
+        window.runStampTests = async function() {
+            logResult('Running stamp tests...');
+            const tester = new BrushStampTest();
+            await tester.initialize();
+
+            const tests = [
+                () => tester.testBasicStamp(),
+                () => tester.testStampTransparency(),
+                () => tester.testStampPositioning()
+            ];
+
+            let passed = 0;
+            for (const test of tests) {
+                if (await test()) passed++;
+            }
+
+            logResult(`Stamp tests: ${passed}/${tests.length} passed`);
+            tester.testResults.forEach(result => {
+                logResult(`  ${result.test}: ${result.success ? 'PASS' : 'FAIL'}`);
+            });
+        };
+
+        window.runAllTests = async function() {
+            logResult('Running all brush & stamp tests...');
+            const tester = new BrushStampTest();
+            const success = await tester.runAllTests();
+            logResult(`All tests completed: ${success ? 'ALL PASSED' : 'SOME FAILED'}`);
+        };
+
+        function logResult(message) {
+            const content = document.getElementById('resultsContent');
+            const time = new Date().toLocaleTimeString();
+            content.innerHTML += `<div>[${time}] ${message}</div>`;
+            content.scrollTop = content.scrollHeight;
+        }
+
+        // Initialize when page loads
+        initialize();
+    </script>
+</body>
+</html>

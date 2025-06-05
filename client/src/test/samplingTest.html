@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Shader Sampling Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 10px; border: 1px solid #ddd; }
+        .controls { margin: 10px 0; }
+        button { margin: 5px; padding: 10px; }
+        .results { background: #f5f5f5; padding: 10px; margin: 10px 0; }
+        .pass { color: green; font-weight: bold; }
+        .fail { color: red; font-weight: bold; }
+        .comparison { display: flex; gap: 20px; }
+        .comparison div { flex: 1; }
+    </style>
+</head>
+<body>
+    <h1>Shader Sampling Test</h1>
+    <p>This test verifies that the shader sampling function produces results consistent with the CPU version.</p>
+    
+    <div class="controls">
+        <button onclick="runSamplingTest()">Test Sampling Consistency</button>
+        <button onclick="runPerformanceTest()">Test Sampling Performance</button>
+        <button onclick="clearTest()">Clear</button>
+    </div>
+
+    <div id="results" class="results">
+        <h3>Test Results:</h3>
+        <div id="output">Click a test button to run tests...</div>
+    </div>
+
+    <script type="module">
+        import init, { Universe } from '@ca/ca';
+        import CAShader from '../components/caShader.js';
+
+        let rustUniverse, caShader;
+
+        async function initializeTest() {
+            await init();
+            
+            // Create CPU universe
+            rustUniverse = new Universe(64, 64);
+            
+            // Create GPU shader
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            document.body.appendChild(canvas);
+            
+            caShader = new CAShader(canvas);
+            caShader.resize(64, 64);
+            caShader.show();
+            
+            console.log('Test environment initialized');
+        }
+
+        function logResult(message, isSuccess = null) {
+            const output = document.getElementById('output');
+            const className = isSuccess === true ? 'pass' : isSuccess === false ? 'fail' : '';
+            output.innerHTML += `<div class="${className}">${message}</div>`;
+        }
+
+        window.runSamplingTest = async function() {
+            logResult('=== Testing Sampling Consistency ===');
+            
+            // Create some test data
+            rustUniverse.clear();
+            caShader.clear();
+            
+            // Draw some test patterns
+            const testPoints = [
+                { x: 20, y: 20, h: 100, s: 255, l: 200 },
+                { x: 30, y: 25, h: 150, s: 200, l: 180 },
+                { x: 40, y: 30, h: 200, s: 180, l: 220 },
+            ];
+            
+            for (const point of testPoints) {
+                rustUniverse.draw_brush(point.x, point.y, 3, true, point.h, point.s, point.l, BigInt(Date.now()));
+                caShader.drawBrush(point.x, point.y, 3, true, point.h, point.s, point.l, BigInt(Date.now()));
+            }
+            
+            caShader.render(true, false);
+            
+            // Test sampling at various locations and radii
+            const testCases = [
+                { x: 25, y: 22, radius: 5, name: 'center of pattern' },
+                { x: 35, y: 27, radius: 3, name: 'edge of pattern' },
+                { x: 10, y: 10, radius: 2, name: 'empty area' },
+                { x: 32, y: 32, radius: 8, name: 'large radius' },
+            ];
+            
+            let allPassed = true;
+            
+            for (const testCase of testCases) {
+                // Sample with CPU version (simulating Midi.vue behavior)
+                const cpuResult = sampleCPU(testCase.x, testCase.y, testCase.radius);
+                
+                // Sample with GPU version
+                const gpuResult = caShader.sampleRegion(testCase.x, testCase.y, testCase.radius);
+                
+                logResult(`Testing ${testCase.name} at (${testCase.x}, ${testCase.y}) radius ${testCase.radius}:`);
+                logResult(`  CPU: h=${cpuResult.avg.h.toFixed(1)}, s=${cpuResult.avg.s.toFixed(1)}, l=${cpuResult.avg.l.toFixed(1)}, a=${cpuResult.avg.a.toFixed(1)}`);
+                logResult(`  GPU: h=${gpuResult.avg.h.toFixed(1)}, s=${gpuResult.avg.s.toFixed(1)}, l=${gpuResult.avg.l.toFixed(1)}, a=${gpuResult.avg.a.toFixed(1)}`);
+                
+                // Check if results are reasonably close (within 5% or 10 units)
+                const tolerance = 10;
+                const hDiff = Math.abs(cpuResult.avg.h - gpuResult.avg.h);
+                const sDiff = Math.abs(cpuResult.avg.s - gpuResult.avg.s);
+                const lDiff = Math.abs(cpuResult.avg.l - gpuResult.avg.l);
+                const aDiff = Math.abs(cpuResult.avg.a - gpuResult.avg.a);
+                
+                const passed = hDiff <= tolerance && sDiff <= tolerance && lDiff <= tolerance && aDiff <= tolerance;
+                
+                logResult(`  Differences: h=${hDiff.toFixed(1)}, s=${sDiff.toFixed(1)}, l=${lDiff.toFixed(1)}, a=${aDiff.toFixed(1)}`, passed);
+                
+                if (!passed) allPassed = false;
+            }
+            
+            logResult(`Overall sampling test: ${allPassed ? 'PASS' : 'FAIL'}`, allPassed);
+        };
+
+        // CPU sampling function (copied from Midi.vue for comparison)
+        function sampleCPU(x, y, radius) {
+            const cells = rustUniverse.cells_ptr();
+            const width = rustUniverse.width();
+            const height = rustUniverse.height();
+            const buffer = new Uint8Array(rustUniverse.cells_len());
+            
+            // Copy the current state
+            const ptr = rustUniverse.cells_ptr();
+            const len = rustUniverse.cells_len();
+            const rustBuffer = new Uint8Array(window.wasm.memory.buffer, ptr, len);
+            buffer.set(rustBuffer);
+            
+            const hsla = [];
+            const sum = { h: 0, s: 0, l: 0, a: 0 };
+
+            const centerX = x;
+            const centerY = y;
+            const startX = Math.max(0, centerX - radius);
+            const endX = Math.min(width, centerX + radius + 1);
+            const startY = Math.max(0, centerY - radius);
+            const endY = Math.min(height, centerY + radius + 1);
+
+            for (let row = startY; row < endY; row++) {
+                for (let col = startX; col < endX; col++) {
+                    // Check if pixel is within circular radius
+                    const dx = col - centerX;
+                    const dy = row - centerY;
+                    if (dx * dx + dy * dy <= radius * radius) {
+                        const idx = (row * width + col) * 4;
+
+                        const h = buffer[idx];
+                        const s = buffer[idx + 1];
+                        const l = buffer[idx + 2];
+                        const a = buffer[idx + 3];
+                        hsla.push({ h, s, l, a });
+                        sum.h += h;
+                        sum.s += s;
+                        sum.l += l;
+                        sum.a += a;
+                    }
+                }
+            }
+
+            const count = hsla.length;
+            if (count === 0) {
+                return { avg: { h: 0, s: 0, l: 0, a: 0 }, variance: { h: 0, s: 0, l: 0, a: 0 } };
+            }
+
+            const avg = {
+                h: sum.h / count,
+                s: sum.s / count,
+                l: sum.l / count,
+                a: sum.a / count,
+            };
+
+            const variance = { h: 0, s: 0, l: 0, a: 0 };
+            for (const cell of hsla) {
+                variance.h += (cell.h - avg.h) ** 2;
+                variance.s += (cell.s - avg.s) ** 2;
+                variance.l += (cell.l - avg.l) ** 2;
+                variance.a += (cell.a - avg.a) ** 2;
+            }
+            for (const k in variance) variance[k] = Math.sqrt(variance[k] / count);
+
+            return { avg, variance };
+        }
+
+        window.runPerformanceTest = async function() {
+            logResult('=== Testing Sampling Performance ===');
+            
+            // Create some test data
+            caShader.randomize();
+            
+            const iterations = 100;
+            const testX = 32, testY = 32, testRadius = 5;
+            
+            // Test GPU performance
+            const gpuStart = performance.now();
+            for (let i = 0; i < iterations; i++) {
+                caShader.sampleRegion(testX, testY, testRadius);
+            }
+            const gpuTime = performance.now() - gpuStart;
+            
+            logResult(`GPU sampling: ${iterations} samples in ${gpuTime.toFixed(2)}ms (${(gpuTime/iterations).toFixed(3)}ms per sample)`);
+            logResult('Note: CPU performance comparison would require WASM memory access setup');
+        };
+
+        window.clearTest = function() {
+            document.getElementById('output').innerHTML = 'Tests cleared.';
+        };
+
+        // Store wasm instance globally for memory access
+        window.wasm = null;
+        
+        // Initialize when page loads
+        initializeTest().then(() => {
+            // Store the wasm instance for memory access
+            window.wasm = window.__wbg_wasm;
+        }).catch(console.error);
+    </script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+/* src/styles/vuetify-settings.scss */
+@use "vuetify/settings" with (
+  /* any value you like */
+  $progress-circular-overlay-transition: all 0.0s linear()
+);
