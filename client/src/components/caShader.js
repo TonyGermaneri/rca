@@ -21,6 +21,13 @@ export default class CAShader {
     // Forward mouse events from shader canvas to global event system
     this.setupMouseEventForwarding();
 
+    // Brush state management (matching Rust BrushState)
+    this.brushState = {
+      lastId: null,
+      points: []
+    };
+    this.MAX_BRUSH_POINTS = 6;
+
     this.gl = this.canvas.getContext('webgl2');
     if (!this.gl) {
       // Clean up the created canvas
@@ -548,17 +555,13 @@ export default class CAShader {
     gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, 1, 1, gl.RGBA, gl.FLOAT, cellData);
   }
 
-  // Draw brush (replicating Rust draw_brush functionality)
-  drawBrush(cx, cy, radius, addMode, h, s, l, brushId) {
-    if (radius <= 0) return;
-
-    const gl = this.gl;
+  // Draw a circular brush dab at a specific point
+  drawCircle(x, y, radius, addMode, h, s, l) {
     const cellsToUpdate = [];
-
-    // Calculate all cells to update
     const r2 = radius * radius;
+
     for (let dy = -radius; dy <= radius; dy++) {
-      const py = cy + dy;
+      const py = y + dy;
       if (py < 0 || py >= this.height) continue;
 
       const dy2 = dy * dy;
@@ -566,7 +569,7 @@ export default class CAShader {
         const dx2 = dx * dx;
         if (dx2 + dy2 > r2) continue;
 
-        const px = cx + dx;
+        const px = x + dx;
         if (px < 0 || px >= this.width) continue;
 
         if (addMode) {
@@ -593,6 +596,64 @@ export default class CAShader {
     // Batch update all cells
     if (cellsToUpdate.length > 0) {
       this.updateCells(cellsToUpdate);
+    }
+  }
+
+  // Catmull-Rom interpolation function (matching Rust implementation)
+  drawCatmullRom(p0, p1, p2, p3, radius, addMode, h, s, l) {
+    const steps = 32;
+
+    const blend = (a, b, c, d, t) => {
+      const t2 = t * t;
+      const t3 = t2 * t;
+      return 0.5 * (
+        (2.0 * b) +
+        (-a + c) * t +
+        (2.0 * a - 5.0 * b + 4.0 * c - d) * t2 +
+        (-a + 3.0 * b - 3.0 * c + d) * t3
+      );
+    };
+
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const x = Math.round(Math.max(0, blend(p0[0], p1[0], p2[0], p3[0], t)));
+      const y = Math.round(Math.max(0, blend(p0[1], p1[1], p2[1], p3[1], t)));
+      this.drawCircle(x, y, radius, addMode, h, s, l);
+    }
+  }
+
+  // Draw brush with Catmull-Rom interpolation (matching Rust draw_brush functionality)
+  drawBrush(cx, cy, radius, addMode, h, s, l, brushId) {
+    if (radius <= 0) return;
+
+    // Manage the brush stroke state (matching Rust implementation)
+    if (this.brushState.lastId === brushId) {
+      this.brushState.points.push([cx, cy]);
+      if (this.brushState.points.length > this.MAX_BRUSH_POINTS) {
+        this.brushState.points.shift(); // Remove first element
+      }
+    } else {
+      this.brushState.points = [[cx, cy]];
+      this.brushState.lastId = brushId;
+    }
+
+    // Draw with spline if we have enough points
+    if (this.brushState.points.length >= 4) {
+      const points = this.brushState.points;
+      for (let i = 0; i < points.length - 3; i++) {
+        this.drawCatmullRom(
+          points[i],
+          points[i + 1],
+          points[i + 2],
+          points[i + 3],
+          radius,
+          addMode,
+          h, s, l
+        );
+      }
+    } else {
+      // Fallback for initial points
+      this.drawCircle(cx, cy, radius, addMode, h, s, l);
     }
   }
 
@@ -858,6 +919,109 @@ export default class CAShader {
     this.originalCanvas.style.display = 'block';
     // Disable mouse events on shader canvas to avoid conflicts
     this.canvas.style.pointerEvents = 'none';
+  }
+
+  // Read pixel data from a region of the texture (for sampling)
+  readPixels(x, y, width, height) {
+    const gl = this.gl;
+
+    // Create a temporary framebuffer for reading
+    const readFramebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, readFramebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.cellTextures[this.currentBuffer], 0);
+
+    // Check framebuffer status
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      gl.deleteFramebuffer(readFramebuffer);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      throw new Error('Framebuffer not complete for reading');
+    }
+
+    // Read the pixel data as float values
+    const pixelData = new Float32Array(width * height * 4);
+    gl.readPixels(x, y, width, height, gl.RGBA, gl.FLOAT, pixelData);
+
+    // Clean up
+    gl.deleteFramebuffer(readFramebuffer);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    // Convert float values back to 0-255 range for compatibility with CPU version
+    const result = new Uint8Array(width * height * 4);
+    for (let i = 0; i < pixelData.length; i++) {
+      result[i] = Math.round(pixelData[i] * 255);
+    }
+
+    return result;
+  }
+
+  // Sample a circular region (matching the CPU sample function interface)
+  sampleRegion(centerX, centerY, radius) {
+    // Calculate bounding box for the circular region
+    const startX = Math.max(0, centerX - radius);
+    const endX = Math.min(this.width, centerX + radius + 1);
+    const startY = Math.max(0, centerY - radius);
+    const endY = Math.min(this.height, centerY + radius + 1);
+
+    const width = endX - startX;
+    const height = endY - startY;
+
+    if (width <= 0 || height <= 0) {
+      return { avg: { h: 0, s: 0, l: 0, a: 0 }, variance: { h: 0, s: 0, l: 0, a: 0 } };
+    }
+
+    // Read the rectangular region containing the circle
+    const pixelData = this.readPixels(startX, startY, width, height);
+
+    // Filter to only include pixels within the circular radius
+    const hsla = [];
+    const sum = { h: 0, s: 0, l: 0, a: 0 };
+
+    for (let row = 0; row < height; row++) {
+      for (let col = 0; col < width; col++) {
+        const pixelX = startX + col;
+        const pixelY = startY + row;
+
+        // Check if pixel is within circular radius
+        const dx = pixelX - centerX;
+        const dy = pixelY - centerY;
+        if (dx * dx + dy * dy <= radius * radius) {
+          const idx = (row * width + col) * 4;
+          const h = pixelData[idx];
+          const s = pixelData[idx + 1];
+          const l = pixelData[idx + 2];
+          const a = pixelData[idx + 3];
+
+          hsla.push({ h, s, l, a });
+          sum.h += h;
+          sum.s += s;
+          sum.l += l;
+          sum.a += a;
+        }
+      }
+    }
+
+    const count = hsla.length;
+    if (count === 0) {
+      return { avg: { h: 0, s: 0, l: 0, a: 0 }, variance: { h: 0, s: 0, l: 0, a: 0 } };
+    }
+
+    const avg = {
+      h: sum.h / count,
+      s: sum.s / count,
+      l: sum.l / count,
+      a: sum.a / count,
+    };
+
+    const variance = { h: 0, s: 0, l: 0, a: 0 };
+    for (const cell of hsla) {
+      variance.h += (cell.h - avg.h) ** 2;
+      variance.s += (cell.s - avg.s) ** 2;
+      variance.l += (cell.l - avg.l) ** 2;
+      variance.a += (cell.a - avg.a) ** 2;
+    }
+    for (const k in variance) variance[k] = Math.sqrt(variance[k] / count);
+
+    return { avg, variance };
   }
 
   // Get current statistics (matching Rust UniverseStats)

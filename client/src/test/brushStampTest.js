@@ -49,7 +49,7 @@ export class BrushStampTest {
 
     // Test parameters
     const cx = 32, cy = 32, radius = 5;
-    const h = 128, s = 255, l = 255, brushId = 12345;
+    const h = 128, s = 255, l = 255, brushId = 12345n; // Use BigInt for Rust compatibility
 
     // Draw with CPU version
     this.rustUniverse.draw_brush(cx, cy, radius, true, h, s, l, brushId);
@@ -98,8 +98,8 @@ export class BrushStampTest {
     const h = 100, s = 200, l = 200;
 
     // Add mode test
-    this.rustUniverse.draw_brush(cx, cy, radius, true, h, s, l, 1);
-    this.shaderCA.drawBrush(cx, cy, radius, true, h, s, l, 1);
+    this.rustUniverse.draw_brush(cx, cy, radius, true, h, s, l, 1n);
+    this.shaderCA.drawBrush(cx, cy, radius, true, h, s, l, 1n);
 
     const afterAdd = {
       rust: this.rustUniverse.stats().alive_count,
@@ -107,8 +107,8 @@ export class BrushStampTest {
     };
 
     // Remove mode test
-    this.rustUniverse.draw_brush(cx, cy, radius - 2, false, 0, 0, 0, 2);
-    this.shaderCA.drawBrush(cx, cy, radius - 2, false, 0, 0, 0, 2);
+    this.rustUniverse.draw_brush(cx, cy, radius - 2, false, 0, 0, 0, 2n);
+    this.shaderCA.drawBrush(cx, cy, radius - 2, false, 0, 0, 0, 2n);
 
     const afterRemove = {
       rust: this.rustUniverse.stats().alive_count,
@@ -138,8 +138,8 @@ export class BrushStampTest {
       this.rustUniverse.clear();
       this.shaderCA.clear();
 
-      this.rustUniverse.draw_brush(32, 32, radius, true, 255, 255, 255, 1);
-      this.shaderCA.drawBrush(32, 32, radius, true, 255, 255, 255, 1);
+      this.rustUniverse.draw_brush(32, 32, radius, true, 255, 255, 255, 1n);
+      this.shaderCA.drawBrush(32, 32, radius, true, 255, 255, 255, 1n);
 
       const rustCount = this.rustUniverse.stats().alive_count;
       const shaderCount = this.shaderCA.getStats().alive_count;
@@ -289,6 +289,65 @@ export class BrushStampTest {
     return allPassed;
   }
 
+  // Test Catmull-Rom interpolation
+  async testCatmullRomInterpolation() {
+    console.log('Testing Catmull-Rom interpolation...');
+
+    // Clear both implementations
+    this.rustUniverse.clear();
+    this.shaderCA.clear();
+
+    const radius = 3;
+    const h = 180, s = 255, l = 255;
+    const brushId = 99999n;
+
+    // Create a sequence of points that should trigger Catmull-Rom interpolation
+    const points = [
+      { x: 10, y: 10 },
+      { x: 20, y: 15 },
+      { x: 30, y: 25 },
+      { x: 40, y: 20 },
+      { x: 50, y: 30 }
+    ];
+
+    // Draw the same stroke with both implementations
+    for (const point of points) {
+      this.rustUniverse.draw_brush(point.x, point.y, radius, true, h, s, l, brushId);
+      this.shaderCA.drawBrush(point.x, point.y, radius, true, h, s, l, brushId);
+    }
+
+    // Force render
+    this.shaderCA.render(true, false);
+
+    // Check that both created interpolated strokes
+    const rustStats = this.rustUniverse.stats();
+    const shaderStats = this.shaderCA.getStats();
+
+    // With Catmull-Rom, we should have significantly more cells than just the 5 points
+    const expectedMinCells = points.length * Math.PI * radius * radius * 0.5; // Conservative estimate
+
+    const rustHasInterpolation = rustStats.alive_count > expectedMinCells;
+    const shaderHasInterpolation = shaderStats.alive_count > expectedMinCells;
+
+    // Check that the counts are reasonably similar (within 30% for interpolated curves)
+    const countDiff = Math.abs(rustStats.alive_count - shaderStats.alive_count);
+    const avgCount = (rustStats.alive_count + shaderStats.alive_count) / 2;
+    const similarCounts = avgCount > 0 ? (countDiff / avgCount) < 0.3 : true;
+
+    const success = rustHasInterpolation && shaderHasInterpolation && similarCounts;
+
+    this.testResults.push({
+      test: 'Catmull-Rom Interpolation',
+      success,
+      details: `CPU alive: ${rustStats.alive_count}, GPU alive: ${shaderStats.alive_count}, expected min: ${Math.floor(expectedMinCells)}, similar: ${similarCounts}`,
+      rustHasInterpolation,
+      shaderHasInterpolation,
+      similarCounts
+    });
+
+    return success;
+  }
+
   // Test RGB to HSL conversion accuracy
   async testRgbToHslConversion() {
     console.log('Testing RGB to HSL conversion...');
@@ -340,6 +399,7 @@ export class BrushStampTest {
       () => this.testBasicBrush(),
       () => this.testBrushModes(),
       () => this.testBrushSizes(),
+      () => this.testCatmullRomInterpolation(),
       () => this.testBasicStamp(),
       () => this.testStampTransparency(),
       () => this.testStampPositioning(),

@@ -288,6 +288,7 @@
         midiClockInput: null,
         midiPlaybackInput: null,
         midiInputs: [],
+        paused: false,
         activeBrushes : new Map(), // note-driven brush sessions
         nextSessionId : 0n, // monotonically increasing BigInt
         listeners: {},
@@ -595,6 +596,12 @@
         return (row * width + col);
       },
       sample (x, y, radius) {
+        // Use shader version if available and active
+        if (this.ca.useShader && this.ca.caShader) {
+          return this.ca.caShader.sampleRegion(x, y, radius);
+        }
+
+        // Fallback to CPU version
         const cells = this.ca.buffer;
         const width = this.ca.universe.width();
         const height = this.ca.universe.height();
@@ -610,22 +617,30 @@
 
         for (let row = startY; row < endY; row++) {
           for (let col = startX; col < endX; col++) {
+            // Check if pixel is within circular radius (matching shader version)
+            const dx = col - centerX;
+            const dy = row - centerY;
+            if (dx * dx + dy * dy <= radius * radius) {
+              const idx = this.index(row, col, this.ca.universe.width()) * 4;
 
-            const idx = this.index(row, col, this.ca.universe.width()) * 4;
-
-            const h = cells[idx];
-            const s = cells[idx + 1];
-            const l = cells[idx + 2];
-            const a = cells[idx + 3];
-            hsla.push({ h, s, l, a });
-            sum.h += h;
-            sum.s += s;
-            sum.l += l;
-            sum.a += a;
+              const h = cells[idx];
+              const s = cells[idx + 1];
+              const l = cells[idx + 2];
+              const a = cells[idx + 3];
+              hsla.push({ h, s, l, a });
+              sum.h += h;
+              sum.s += s;
+              sum.l += l;
+              sum.a += a;
+            }
           }
         }
 
         const count = hsla.length;
+        if (count === 0) {
+          return { avg: { h: 0, s: 0, l: 0, a: 0 }, variance: { h: 0, s: 0, l: 0, a: 0 } };
+        }
+
         const avg = {
           h: sum.h / count,
           s: sum.s / count,

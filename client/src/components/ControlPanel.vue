@@ -30,10 +30,6 @@
               </template>
             </v-list-item>
 
-            <v-list-item @click="addMidiListener">
-              <v-list-item-title>Add MIDI Out</v-list-item-title>
-            </v-list-item>
-
             <v-list-item @click="pause">
               <v-list-item-title>{{ paused ? 'Resume' : 'Pause' }}</v-list-item-title>
               <template v-slot:append>
@@ -47,8 +43,6 @@
                 <v-chip size="x-small" variant="outlined">S</v-chip>
               </template>
             </v-list-item>
-
-            <v-divider></v-divider>
 
             <v-list-item @click="clear">
               <v-list-item-title>Clear</v-list-item-title>
@@ -71,17 +65,25 @@
               </template>
             </v-list-item>
 
-            <v-divider></v-divider>
+            <v-list-item @click="addMidiListener">
+              <v-list-item-title>Add Monitor</v-list-item-title>
+              <template v-slot:append>
+                <v-chip size="x-small" variant="outlined">M</v-chip>
+              </template>
+            </v-list-item>
+
+
+            <v-list-item @click="addMidiListener">
+              <v-list-item-title>Clone Monitor</v-list-item-title>
+              <template v-slot:append>
+                <v-chip size="x-small" variant="outlined">L</v-chip>
+              </template>
+            </v-list-item>
 
             <v-list-item @click="toggleShader">
-              <v-list-item-title>
+              <v-list-item-title class="mr-6">
                 Switch to {{ useShader ? 'CPU' : 'GPU' }} Mode
               </v-list-item-title>
-              <template v-slot:prepend>
-                <v-icon :color="useShader ? 'primary' : 'default'">
-                  {{ useShader ? 'mdi-gpu' : 'mdi-cpu-64-bit' }}
-                </v-icon>
-              </template>
               <template v-slot:append>
                 <v-chip size="x-small" variant="outlined">G</v-chip>
               </template>
@@ -243,7 +245,6 @@
     data () {
       return {
         ca: null,
-        pulseColor: '#FF0000FF',
         midiTimeStamp: 0,
         msPerBeat: 0,
         performance: { fps: 0, bpm: 0 },
@@ -362,14 +363,6 @@
       },
       pauseWatch (e) {
         this.paused = e.detail;
-      },
-      quarterNotePulse (e){
-        this.midiTimeStamp = e.detail.midiTimeStamp;
-        this.msPerBeat = e.detail.msPerBeat;
-        this.pulseColor = '#FFFFFFFF';
-        setTimeout(() => {
-          this.pulseColor = '#FF0000FF';
-        }, 100);
       },
       updatePerformance (e) {
         this.performance = e.detail;

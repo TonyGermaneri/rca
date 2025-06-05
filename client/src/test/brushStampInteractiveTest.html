@@ -154,10 +154,10 @@
             const addMode = document.getElementById('brushMode').value === 'add';
 
             if (useShader && caShader) {
-                caShader.drawBrush(x, y, radius, addMode, hue, sat, lum, Date.now());
+                caShader.drawBrush(x, y, radius, addMode, hue, sat, lum, BigInt(Date.now()));
                 caShader.render(true, false);
             } else {
-                rustUniverse.draw_brush(x, y, radius, addMode, hue, sat, lum, Date.now());
+                rustUniverse.draw_brush(x, y, radius, addMode, hue, sat, lum, BigInt(Date.now()));
                 // Note: In real app, this would trigger a render
             }
         }
@@ -243,7 +243,7 @@
 
             if (useShader && caShader) {
                 console.log('Using shader for brush test');
-                caShader.drawBrush(x, y, radius, addMode, hue, sat, lum, Date.now());
+                caShader.drawBrush(x, y, radius, addMode, hue, sat, lum, BigInt(Date.now()));
                 caShader.render(true, false);
 
                 // Get stats to verify
@@ -251,7 +251,7 @@
                 logResult(`Shader stats after brush: alive=${stats.alive_count}`);
             } else {
                 console.log('Using CPU for brush test');
-                rustUniverse.draw_brush(x, y, radius, addMode, hue, sat, lum, Date.now());
+                rustUniverse.draw_brush(x, y, radius, addMode, hue, sat, lum, BigInt(Date.now()));
 
                 // Get stats to verify
                 const stats = rustUniverse.stats();

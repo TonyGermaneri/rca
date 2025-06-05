@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Catmull-Rom Brush Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        canvas { border: 1px solid #ccc; margin: 10px; }
+        .test-section { margin: 20px 0; padding: 10px; border: 1px solid #ddd; }
+        .controls { margin: 10px 0; }
+        button { margin: 5px; padding: 10px; }
+        .results { background: #f5f5f5; padding: 10px; margin: 10px 0; }
+        .pass { color: green; font-weight: bold; }
+        .fail { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Catmull-Rom Brush Interpolation Test</h1>
+    
+    <div class="test-section">
+        <h2>Visual Comparison</h2>
+        <p>Left: CPU (Rust) implementation | Right: GPU (Shader) implementation</p>
+        <canvas id="cpuCanvas" width="256" height="256"></canvas>
+        <canvas id="gpuCanvas" width="256" height="256"></canvas>
+    </div>
+
+    <div class="controls">
+        <button onclick="runCatmullRomTest()">Test Catmull-Rom Interpolation</button>
+        <button onclick="runBasicBrushTest()">Test Basic Brush</button>
+        <button onclick="clearCanvases()">Clear</button>
+    </div>
+
+    <div id="results" class="results">
+        <h3>Test Results:</h3>
+        <div id="output">Click a test button to run tests...</div>
+    </div>
+
+    <script type="module">
+        import init, { Universe } from '@ca/ca';
+        import CAShader from '../components/caShader.js';
+
+        let rustUniverse, caShader, cpuCanvas, gpuCanvas;
+
+        async function initializeTest() {
+            await init();
+            
+            cpuCanvas = document.getElementById('cpuCanvas');
+            gpuCanvas = document.getElementById('gpuCanvas');
+            
+            // Create CPU universe
+            rustUniverse = new Universe(128, 128);
+            
+            // Create GPU shader
+            caShader = new CAShader(gpuCanvas);
+            caShader.resize(128, 128);
+            caShader.show();
+            
+            console.log('Test environment initialized');
+        }
+
+        function logResult(message, isSuccess = null) {
+            const output = document.getElementById('output');
+            const className = isSuccess === true ? 'pass' : isSuccess === false ? 'fail' : '';
+            output.innerHTML += `<div class="${className}">${message}</div>`;
+        }
+
+        window.runCatmullRomTest = async function() {
+            logResult('=== Testing Catmull-Rom Interpolation ===');
+            
+            // Clear both implementations
+            rustUniverse.clear();
+            caShader.clear();
+            
+            const radius = 4;
+            const h = 120, s = 255, l = 255;
+            const brushId = 999999n;
+            
+            // Create a curved stroke that should trigger Catmull-Rom interpolation
+            const points = [
+                { x: 20, y: 40 },
+                { x: 40, y: 30 },
+                { x: 60, y: 50 },
+                { x: 80, y: 35 },
+                { x: 100, y: 60 }
+            ];
+            
+            logResult(`Drawing ${points.length} points with radius ${radius}...`);
+            
+            // Draw the same stroke with both implementations
+            for (const point of points) {
+                rustUniverse.draw_brush(point.x, point.y, radius, true, h, s, l, brushId);
+                caShader.drawBrush(point.x, point.y, radius, true, h, s, l, brushId);
+            }
+            
+            // Force render
+            caShader.render(true, false);
+            
+            // Check results
+            const rustStats = rustUniverse.stats();
+            const shaderStats = caShader.getStats();
+            
+            logResult(`CPU alive cells: ${rustStats.alive_count}`);
+            logResult(`GPU alive cells: ${shaderStats.alive_count}`);
+            
+            // With Catmull-Rom, we should have significantly more cells than just the 5 points
+            const expectedMinCells = points.length * Math.PI * radius * radius * 0.5;
+            logResult(`Expected minimum cells (conservative): ${Math.floor(expectedMinCells)}`);
+            
+            const rustHasInterpolation = rustStats.alive_count > expectedMinCells;
+            const shaderHasInterpolation = shaderStats.alive_count > expectedMinCells;
+            
+            logResult(`CPU has interpolation: ${rustHasInterpolation}`, rustHasInterpolation);
+            logResult(`GPU has interpolation: ${shaderHasInterpolation}`, shaderHasInterpolation);
+            
+            // Check that the counts are reasonably similar (within 30% for interpolated curves)
+            const countDiff = Math.abs(rustStats.alive_count - shaderStats.alive_count);
+            const avgCount = (rustStats.alive_count + shaderStats.alive_count) / 2;
+            const similarCounts = avgCount > 0 ? (countDiff / avgCount) < 0.3 : true;
+            
+            logResult(`Count difference: ${countDiff} (${(countDiff/avgCount*100).toFixed(1)}%)`, similarCounts);
+            
+            const success = rustHasInterpolation && shaderHasInterpolation && similarCounts;
+            logResult(`Overall Catmull-Rom test: ${success ? 'PASS' : 'FAIL'}`, success);
+        };
+
+        window.runBasicBrushTest = async function() {
+            logResult('=== Testing Basic Brush ===');
+            
+            // Clear both implementations
+            rustUniverse.clear();
+            caShader.clear();
+            
+            const cx = 64, cy = 64, radius = 8;
+            const h = 180, s = 255, l = 255, brushId = 12345n;
+            
+            // Draw single brush dab
+            rustUniverse.draw_brush(cx, cy, radius, true, h, s, l, brushId);
+            caShader.drawBrush(cx, cy, radius, true, h, s, l, brushId);
+            
+            // Force render
+            caShader.render(true, false);
+            
+            const rustStats = rustUniverse.stats();
+            const shaderStats = caShader.getStats();
+            
+            logResult(`CPU alive cells: ${rustStats.alive_count}`);
+            logResult(`GPU alive cells: ${shaderStats.alive_count}`);
+            
+            const success = rustStats.alive_count > 0 && shaderStats.alive_count > 0;
+            logResult(`Basic brush test: ${success ? 'PASS' : 'FAIL'}`, success);
+        };
+
+        window.clearCanvases = function() {
+            if (rustUniverse) rustUniverse.clear();
+            if (caShader) {
+                caShader.clear();
+                caShader.render(true, false);
+            }
+            document.getElementById('output').innerHTML = 'Canvases cleared.';
+        };
+
+        // Initialize when page loads
+        initializeTest().catch(console.error);
+    </script>
+</body>
+</html>
