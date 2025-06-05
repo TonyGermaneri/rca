@@ -5,6 +5,7 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "vite",
+    "prebuild": "cd .. && make package",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint . --fix",
